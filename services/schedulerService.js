@@ -6,6 +6,7 @@ const GlobalNotificationSetting = sequelize.GlobalNotificationSetting;
 const ScheduledUnitNotification = sequelize.ScheduledUnitNotification;
 const UnitBudidaya = sequelize.UnitBudidaya;
 const { sendNotificationToUser } = require("./notificationService");
+const { fetchAndSaveSensorData } = require("./antaresService");
 const Pesanan = sequelize.Pesanan;
 const PesananDetail = sequelize.PesananDetail;
 const Produk = sequelize.Produk;
@@ -216,13 +217,22 @@ function startScheduler() {
     scheduled: true,
   });
   cron.schedule("* * * * *", expireUnpaidOrders, { scheduled: true });
+  
+  // Antares sensor data fetching - every 5 minutes
+  cron.schedule("*/5 * * * *", fetchAndSaveSensorData, { scheduled: true });
+  
   console.log(
     `Notification scheduler started. Running every minute. App Timezone: Asia/Jakarta. Current Time for Scheduler: ${moment().format(
       "YYYY-MM-DD HH:mm:ss Z"
     )}`
   );
+  console.log(`Sensor scheduler started. Running every 5 minutes.`);
+  
   checkAndSendScheduledNotifications();
   // Opsional: jalankan sekali saat start untuk testing
+  
+  // Fetch sensor data on startup
+  fetchAndSaveSensorData();
 }
 
 module.exports = {
