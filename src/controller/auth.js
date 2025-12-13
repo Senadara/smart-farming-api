@@ -79,11 +79,10 @@ const login = async (req, res, next) => {
     if (userExist.isActive && userExist.role == "pjawab") {
       idAsli = await Toko.findOne({
         where: {
-          TypeToko: "rfc"
+          TypeToko: "rfc",
         },
-        attributes: ["UserId"]
-
-      })
+        attributes: ["UserId"],
+      });
       // console.log("idAsli", idAsli);
     }
     const usr = {
@@ -692,9 +691,10 @@ const resetPassword = async (req, res, next) => {
   try {
     const user = await dataValid(valid, req.body);
     if (user.message.length > 0) {
+      t.rollback();
       return res.status(400).json({
         error: user.message,
-        message: "Reset password failed",
+        message: user.message[0],
       });
     }
 

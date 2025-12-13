@@ -37,7 +37,7 @@ const dataValid = async (valid, dt) => {
               ) {
                 ms.push(
                   key +
-                    " most be at least 8 characters long, contain at least one uppercase letter, one lowercase letter, one number and one symbol"
+                    " must be at least 8 characters long, contain at least one uppercase letter, one lowercase letter, one number and one symbol"
                 );
               }
               break;
