@@ -4,16 +4,17 @@ const sequelize = require("../src/model/index");
 const SensorData = sequelize.SensorData;
 
 // Antares API Configuration
-const ANTARES_BASE_URL = "https://platform.antares.id:8443";
-const ANTARES_ENDPOINTS = {
-  nitrogen: `${ANTARES_BASE_URL}/~/antares-cse/antares-id/interest/Nitrogen/la`,
-  phosphor: `${ANTARES_BASE_URL}/~/antares-cse/antares-id/interest/phospor/la`,
-  potassium: `${ANTARES_BASE_URL}/~/antares-cse/antares-id/interest/pota/la`,
-  temperature: `${ANTARES_BASE_URL}/~/antares-cse/antares-id/interest/temp/la`,
-  humidity: `${ANTARES_BASE_URL}/~/antares-cse/antares-id/interest/humidity/la`,
-  ec: `${ANTARES_BASE_URL}/~/antares-cse/antares-id/interest/EC/la`,
-  ph: `${ANTARES_BASE_URL}/~/antares-cse/antares-id/interest/ph/la`,
-};
+const ANTARES_BASE_URL = process.env.ANTARES_BASE_URL || "https://platform.antares.id:8443";
+const ANTARES_APP_NAME = process.env.ANTARES_APP_NAME || "interest";
+const getAntaresEndpoints = () => ({
+  nitrogen: `${ANTARES_BASE_URL}/~/antares-cse/antares-id/${ANTARES_APP_NAME}/Nitrogen/la`,
+  phosphor: `${ANTARES_BASE_URL}/~/antares-cse/antares-id/${ANTARES_APP_NAME}/phospor/la`,
+  potassium: `${ANTARES_BASE_URL}/~/antares-cse/antares-id/${ANTARES_APP_NAME}/pota/la`,
+  temperature: `${ANTARES_BASE_URL}/~/antares-cse/antares-id/${ANTARES_APP_NAME}/temp/la`,
+  humidity: `${ANTARES_BASE_URL}/~/antares-cse/antares-id/${ANTARES_APP_NAME}/humidity/la`,
+  ec: `${ANTARES_BASE_URL}/~/antares-cse/antares-id/${ANTARES_APP_NAME}/EC/la`,
+  ph: `${ANTARES_BASE_URL}/~/antares-cse/antares-id/${ANTARES_APP_NAME}/ph/la`,
+});
 
 /**
  * Parse sensor value from Antares response
@@ -79,7 +80,7 @@ async function fetchAllSensorData() {
   );
 
   // Create array of fetch promises
-  const fetchPromises = Object.entries(ANTARES_ENDPOINTS).map(
+  const fetchPromises = Object.entries(getAntaresEndpoints()).map(
     ([sensorName, url]) => fetchSingleSensor(sensorName, url)
   );
 

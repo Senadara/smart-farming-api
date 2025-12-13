@@ -16,6 +16,7 @@ const app = express();
 const indexRouter = require("./src/routes/indexRoute");
 const storeRouter = require("./src/routes/store/storeIndex");
 const { startScheduler } = require("./services/schedulerService");
+const { startMqttClient } = require("./services/mqttService");
 
 const apiRouter = express.Router();
 
@@ -54,3 +55,6 @@ app.use((err, req, res, next) => {
 app.listen(PORT, () => console.log(`Server is running on ${BASE_URL}`));
 
 startScheduler();
+
+// Start MQTT client untuk monitoring realtime sensor data
+startMqttClient();

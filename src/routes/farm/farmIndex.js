@@ -14,7 +14,8 @@ const globalNotificationSettingRouter = require("./globalNotificationSetting");
 const scheduledUnitNotificationRouter = require("./scheduledUnitNotification");
 const gradeRouter = require("./grade");
 const laporanHamaRouter = require("./laporanHama");
-const sensorRouter = require("./sensor");
+const melonRouter = require("./sensor"); // Melon sensor data (formerly sensor)
+const ayamRouter = require("./ayam"); // Ayam sensor data from MQTT
 
 const reportRouter = require("./report");
 
@@ -35,6 +36,7 @@ router.use("/scheduledUnitNotification", scheduledUnitNotificationRouter);
 router.use("/grade", gradeRouter);
 router.use("/laporan-hama", laporanHamaRouter);
 router.use("/report", reportRouter);
-router.use("/sensors", sensorRouter);
+router.use("/melon", melonRouter); // /api/farm/melon/latest
+router.use("/ayam", ayamRouter);   // /api/farm/ayam/latest, /api/farm/ayam/history
 
 module.exports = router;

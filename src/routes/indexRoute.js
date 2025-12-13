@@ -13,10 +13,6 @@ router.use("/user", userRouter);
 router.use("/auth", authRouter);
 router.use("/midtrans", webhookRouter);
 
-// Public endpoint for testing - REMOVE AFTER TESTING
-const sensorRouter = require("./farm/sensor");
-router.use("/sensors", sensorRouter);
-
 router.use("/farm", authenticate(["pjawab", "inventor", "petugas", "penjual"]), farmRouter);
 router.use("/store", authenticate(["admin", "pjawab", "penjual", "user"]), storeRouter);
 
