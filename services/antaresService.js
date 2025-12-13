@@ -170,12 +170,42 @@ async function saveSensorDataIfChanged(sensorData) {
 }
 
 /**
+ * Check if sensor data contains any null values
+ * @param {Object} sensorData - Sensor data to check
+ * @returns {boolean} - True if any value is null
+ */
+function hasNullValues(sensorData) {
+  const keys = ["nitrogen", "phosphor", "potassium", "temperature", "humidity", "ec", "ph"];
+  return keys.some(key => sensorData[key] === null || sensorData[key] === undefined);
+}
+
+/**
  * Main function to fetch and save sensor data
  * Called by the scheduler
+ * If data contains null values, retry after 10 seconds
  */
-async function fetchAndSaveSensorData() {
+async function fetchAndSaveSensorData(retryCount = 0) {
+  const MAX_RETRIES = 3;
+  
   try {
     const sensorData = await fetchAllSensorData();
+    
+    // Validasi: jika ada null, retry setelah 10 detik
+    if (hasNullValues(sensorData)) {
+      if (retryCount < MAX_RETRIES) {
+        console.log(
+          `[${moment().format("YYYY-MM-DD HH:mm:ss")}] [Antares] ⚠️ Data contains null values, retrying in 10 seconds... (attempt ${retryCount + 1}/${MAX_RETRIES})`
+        );
+        setTimeout(() => fetchAndSaveSensorData(retryCount + 1), 10000);
+        return;
+      } else {
+        console.log(
+          `[${moment().format("YYYY-MM-DD HH:mm:ss")}] [Antares] ❌ Max retries reached, skipping save (data still contains null)`
+        );
+        return;
+      }
+    }
+    
     await saveSensorDataIfChanged(sensorData);
   } catch (error) {
     console.error(

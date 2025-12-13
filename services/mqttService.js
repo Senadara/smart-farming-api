@@ -57,12 +57,15 @@ const isSameData = (newData) => {
 };
 
 /**
- * Simpan data ke database jika ada perubahan
+ * Simpan data ke database jika ada perubahan dan data valid (tidak null)
  */
 const saveIfChanged = async (data) => {
-  // Validasi data
-  if (data.temperature === undefined || data.humidity === undefined) {
-    console.log(`[${getTimestamp()}] [MQTT] ⚠️ Data tidak valid, skip`);
+  // Validasi data - tolak jika null atau undefined
+  if (
+    data.temperature === undefined || data.temperature === null ||
+    data.humidity === undefined || data.humidity === null
+  ) {
+    console.log(`[${getTimestamp()}] [MQTT] ⚠️ Data null/undefined, skip save`);
     return false;
   }
 
