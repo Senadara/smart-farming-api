@@ -1,10 +1,20 @@
-const sequelize = require("../../model/index");
-const db = sequelize.sequelize;
-const Komoditas = sequelize.Komoditas;
-const JenisBudidaya = sequelize.JenisBudidaya;
-const Satuan = sequelize.Satuan;
-const Produk = sequelize.Produk;
-const Op = sequelize.Sequelize.Op;
+// const sequelize = require("../../model/index");
+// const db = sequelize.sequelize;
+// const Komoditas = sequelize.Komoditas;
+// const Produk = sequelize.Produk;
+// const JenisBudidaya = sequelize.JenisBudidaya;
+// const Satuan = sequelize.Satuan;
+// const Op = sequelize.Sequelize.Op;
+
+const db = require("../../model");   // index.js
+const sequelize = db.sequelize;      // ✅ instance Sequelize
+
+const Komoditas = db.Komoditas;
+const Produk = db.Produk;
+const JenisBudidaya = db.JenisBudidaya;
+const Satuan = db.Satuan;
+const Op = db.Sequelize.Op;
+
 
 const { getPaginationOptions } = require("../../utils/paginationUtils");
 
@@ -298,52 +308,116 @@ const updateKomoditas = async (req, res) => {
   }
 };
 
+// const deleteKomoditas = async (req, res) => {
+//   const t = await sequelize.transaction();
+//   try {
+//     const data = await Komoditas.findOne({
+//       where: { id: req.params.id, isDeleted: false },
+//     });
+
+//     const produkInstance = await Produk.findOne({
+//       where: { id: data.produkId, isDeleted: false },
+//     });
+
+//     if (!data) {
+//       return res.status(404).json({
+//         message: "Data not found",
+//       });
+//     }
+
+//     if (produkInstance) {
+//       await produkInstance.update(
+//         {
+//           isDeleted: true,
+//         },
+//         { transaction: t }
+//       );
+//     }
+
+//     data.isDeleted = true;
+//     await data.save({ transaction: t });
+
+//     await t.commit();
+
+//     res.locals.updatedData = data.toJSON();
+
+//     return res.status(200).json({
+//       message: "Successfully deleted komoditas data",
+//       data: { id: req.params.id },
+//     });
+//   } catch (error) {
+//     await t.rollback();
+
+//     res.status(500).json({
+//       message: error.message,
+//       detail: error,
+//     });
+//   }
+// };
+
 const deleteKomoditas = async (req, res) => {
   const t = await sequelize.transaction();
+
   try {
     const data = await Komoditas.findOne({
-      where: { id: req.params.id, isDeleted: false },
-    });
-
-    const produkInstance = await Produk.findOne({
-      where: { id: data.produkId, isDeleted: false },
+      where: {
+        id: req.params.id,
+        isDeleted: false,
+      },
+      transaction: t,
     });
 
     if (!data) {
+      await t.rollback();
       return res.status(404).json({
-        message: "Data not found",
+        message: "Data komoditas tidak ditemukan",
       });
     }
 
-    if (produkInstance) {
-      await produkInstance.update(
-        {
-          isDeleted: true,
+    if (data.produkId) {
+      const produkInstance = await Produk.findOne({
+        where: {
+          id: data.produkId,
+          isDeleted: false,
         },
-        { transaction: t }
-      );
+        transaction: t,
+      });
+
+      if (produkInstance) {
+        await produkInstance.update(
+          { isDeleted: true },
+          { transaction: t }
+        );
+      }
     }
 
-    data.isDeleted = true;
-    await data.save({ transaction: t });
+    await data.update(
+      { isDeleted: true },
+      { transaction: t }
+    );
 
     await t.commit();
-
-    res.locals.updatedData = data.toJSON();
 
     return res.status(200).json({
       message: "Successfully deleted komoditas data",
       data: { id: req.params.id },
     });
-  } catch (error) {
-    await t.rollback();
 
-    res.status(500).json({
-      message: error.message,
-      detail: error,
+  } catch (error) {
+    if (t) await t.rollback();
+
+    console.error("DELETE KOMODITAS ERROR:", error);
+
+    return res.status(500).json({
+      message: "Internal server error",
+      error: error.message,
     });
   }
 };
+
+
+
+
 
 const getAllKomoditasWithoutProduk = async (req, res) => {
   try {
