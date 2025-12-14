@@ -46,6 +46,25 @@ const parsePayload = (payload) => {
 };
 
 /**
+ * Normalize sensor data before saving to database
+ * Conversions:
+ * - temperature = raw_value / 10 (°C)
+ * - humidity = raw_value / 10 (%)
+ * @param {Object} rawData - Raw sensor data from MQTT
+ * @returns {Object} - Normalized sensor data
+ */
+const normalizeSensorData = (rawData) => {
+  return {
+    temperature: rawData.temperature !== null && rawData.temperature !== undefined 
+      ? rawData.temperature / 10 
+      : null,
+    humidity: rawData.humidity !== null && rawData.humidity !== undefined 
+      ? rawData.humidity / 10 
+      : null,
+  };
+};
+
+/**
  * Cek apakah data baru sama dengan data terakhir yang disimpan
  */
 const isSameData = (newData) => {
@@ -58,6 +77,7 @@ const isSameData = (newData) => {
 
 /**
  * Simpan data ke database jika ada perubahan dan data valid (tidak null)
+ * Data dinormalisasi sebelum disimpan (temperature/10, humidity/10)
  */
 const saveIfChanged = async (data) => {
   // Validasi data - tolak jika null atau undefined
@@ -69,25 +89,28 @@ const saveIfChanged = async (data) => {
     return false;
   }
 
-  // Cek apakah sama dengan data terakhir
-  if (isSameData(data)) {
+  // Normalize data before processing
+  const normalizedData = normalizeSensorData(data);
+
+  // Cek apakah sama dengan data terakhir (gunakan data yang sudah dinormalisasi)
+  if (isSameData(normalizedData)) {
     console.log(`[${getTimestamp()}] [MQTT] ⏭️ Data sama, skip save`);
     return false;
   }
 
   try {
     await AyamSensorData.create({
-      temperature: data.temperature,
-      humidity: data.humidity,
+      temperature: normalizedData.temperature,
+      humidity: normalizedData.humidity,
     });
 
-    // Update cache
+    // Update cache dengan data yang sudah dinormalisasi
     lastSavedData = {
-      temperature: data.temperature,
-      humidity: data.humidity,
+      temperature: normalizedData.temperature,
+      humidity: normalizedData.humidity,
     };
 
-    console.log(`[${getTimestamp()}] [MQTT] ✅ Saved: temp=${data.temperature}°C, hum=${data.humidity}%`);
+    console.log(`[${getTimestamp()}] [MQTT] ✅ Saved (normalized): temp=${normalizedData.temperature}°C, hum=${normalizedData.humidity}%`);
     return true;
   } catch (error) {
     console.error(`[${getTimestamp()}] [MQTT] ❌ Save error: ${error.message}`);

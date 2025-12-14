@@ -36,6 +36,29 @@ function parseSensorValue(value) {
 }
 
 /**
+ * Normalize sensor data before saving to database
+ * Conversions:
+ * - temperature = raw_value / 10 (°C)
+ * - humidity = raw_value / 10 (%)
+ * - ec = raw_value / 10 (mS/cm)
+ * - ph = raw_value / 100
+ * - nitrogen, phosphor, potassium = unchanged
+ * @param {Object} rawData - Raw sensor data from Antares
+ * @returns {Object} - Normalized sensor data
+ */
+function normalizeSensorData(rawData) {
+  return {
+    nitrogen: rawData.nitrogen, // tidak diubah
+    phosphor: rawData.phosphor, // tidak diubah
+    potassium: rawData.potassium, // tidak diubah
+    temperature: rawData.temperature !== null ? rawData.temperature / 10 : null,
+    humidity: rawData.humidity !== null ? rawData.humidity / 10 : null,
+    ec: rawData.ec !== null ? rawData.ec / 10 : null,
+    ph: rawData.ph !== null ? rawData.ph / 100 : null,
+  };
+}
+
+/**
  * Fetch single sensor data from Antares endpoint
  * @param {string} sensorName - Name of the sensor
  * @param {string} url - Antares endpoint URL
@@ -126,38 +149,42 @@ function isSameData(newData, existingData) {
 
 /**
  * Save sensor data to database if values have changed
- * @param {Object} sensorData - Sensor data to save
+ * Data is normalized before saving (temperature/10, humidity/10, ec/10, ph/100)
+ * @param {Object} sensorData - Raw sensor data to save
  * @returns {Promise<boolean>} - True if data was saved, false if skipped
  */
 async function saveSensorDataIfChanged(sensorData) {
   try {
+    // Normalize sensor data before processing
+    const normalizedData = normalizeSensorData(sensorData);
+    
     // Get the latest record from database
     const latestRecord = await SensorData.findOne({
       where: { isDeleted: false },
       order: [["createdAt", "DESC"]],
     });
 
-    // Compare with new data
-    if (isSameData(sensorData, latestRecord)) {
+    // Compare normalized data with latest record
+    if (isSameData(normalizedData, latestRecord)) {
       console.log(
         `[${moment().format("YYYY-MM-DD HH:mm:ss")}] [Antares] No change detected, skipping insert`
       );
       return false;
     }
 
-    // Insert new record
+    // Insert new record with normalized values
     await SensorData.create({
-      nitrogen: sensorData.nitrogen,
-      phosphor: sensorData.phosphor,
-      potassium: sensorData.potassium,
-      temperature: sensorData.temperature,
-      humidity: sensorData.humidity,
-      ec: sensorData.ec,
-      ph: sensorData.ph,
+      nitrogen: normalizedData.nitrogen,
+      phosphor: normalizedData.phosphor,
+      potassium: normalizedData.potassium,
+      temperature: normalizedData.temperature,
+      humidity: normalizedData.humidity,
+      ec: normalizedData.ec,
+      ph: normalizedData.ph,
     });
 
     console.log(
-      `[${moment().format("YYYY-MM-DD HH:mm:ss")}] [Antares] New sensor data saved`
+      `[${moment().format("YYYY-MM-DD HH:mm:ss")}] [Antares] New sensor data saved (normalized: temp=${normalizedData.temperature}°C, hum=${normalizedData.humidity}%, ec=${normalizedData.ec}mS/cm, ph=${normalizedData.ph})`
     );
     return true;
   } catch (error) {
