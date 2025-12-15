@@ -299,7 +299,7 @@ const updateKomoditas = async (req, res) => {
 };
 
 const deleteKomoditas = async (req, res) => {
-  const t = await sequelize.transaction();
+  const t = await db.transaction();
   try {
     const data = await Komoditas.findOne({
       where: { id: req.params.id, isDeleted: false },
