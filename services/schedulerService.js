@@ -219,7 +219,7 @@ function startScheduler() {
   cron.schedule("* * * * *", expireUnpaidOrders, { scheduled: true });
   
   // Antares sensor data fetching - every 5 minutes
-  cron.schedule("*/1 * * * *", fetchAndSaveSensorData, { scheduled: true });
+  cron.schedule("*/5 * * * *", fetchAndSaveSensorData, { scheduled: true });
   
   console.log(
     `Notification scheduler started. Running every minute. App Timezone: Asia/Jakarta. Current Time for Scheduler: ${moment().format(

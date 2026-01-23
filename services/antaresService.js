@@ -17,7 +17,7 @@ const getAntaresEndpoints = () => ({
 });
 
 // Force save interval: 30 menit dalam milliseconds
-const FORCE_SAVE_INTERVAL_MS = 1 * 60 * 1000; // 30 minutes
+const FORCE_SAVE_INTERVAL_MS = 10 * 60 * 1000; // 30 minutes
 
 // Cache untuk tracking last saved time
 let lastSavedTime = null;
