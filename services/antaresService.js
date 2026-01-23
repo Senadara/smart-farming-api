@@ -16,6 +16,12 @@ const getAntaresEndpoints = () => ({
   ph: `${ANTARES_BASE_URL}/~/antares-cse/antares-id/${ANTARES_APP_NAME}/ph/la`,
 });
 
+// Force save interval: 30 menit dalam milliseconds
+const FORCE_SAVE_INTERVAL_MS = 1 * 60 * 1000; // 30 minutes
+
+// Cache untuk tracking last saved time
+let lastSavedTime = null;
+
 /**
  * Parse sensor value from Antares response
  * Handles values like "'2'" -> 2 (removes single quotes and converts to number)
@@ -148,8 +154,42 @@ function isSameData(newData, existingData) {
 }
 
 /**
- * Save sensor data to database if values have changed
- * Data is normalized before saving (temperature/10, humidity/10, ec/10, ph/100)
+ * Cek apakah perlu force save (30 menit tanpa save)
+ * @returns {boolean} - True jika perlu force save
+ */
+function shouldForceSave() {
+  if (!lastSavedTime) return true; // Belum pernah save, force save
+  const now = Date.now();
+  const timeSinceLastSave = now - lastSavedTime;
+  return timeSinceLastSave >= FORCE_SAVE_INTERVAL_MS;
+}
+
+/**
+ * Initialize lastSavedTime from database
+ */
+async function initLastSavedTime() {
+  try {
+    const latest = await SensorData.findOne({
+      where: { isDeleted: false },
+      order: [["createdAt", "DESC"]],
+    });
+    if (latest) {
+      lastSavedTime = new Date(latest.createdAt).getTime();
+      console.log(`[Antares] Loaded last saved time from DB: ${moment(lastSavedTime).format("YYYY-MM-DD HH:mm:ss")}`);
+    }
+  } catch (error) {
+    console.error(`[Antares] Error loading last saved time: ${error.message}`);
+  }
+}
+
+/**
+ * Save sensor data to database with change detection and force save logic
+ * 
+ * Logic:
+ * - Jika data berubah -> simpan
+ * - Jika data sama DAN < 30 menit sejak save terakhir -> skip
+ * - Jika data sama TAPI >= 30 menit sejak save terakhir -> simpan (force save)
+ * 
  * @param {Object} sensorData - Raw sensor data to save
  * @returns {Promise<boolean>} - True if data was saved, false if skipped
  */
@@ -164,10 +204,16 @@ async function saveSensorDataIfChanged(sensorData) {
       order: [["createdAt", "DESC"]],
     });
 
-    // Compare normalized data with latest record
-    if (isSameData(normalizedData, latestRecord)) {
+    const dataIsSame = isSameData(normalizedData, latestRecord);
+    const needForceSave = shouldForceSave();
+
+    // Logic: simpan jika data berubah ATAU jika perlu force save
+    if (dataIsSame && !needForceSave) {
+      const minutesSinceLastSave = lastSavedTime 
+        ? Math.floor((Date.now() - lastSavedTime) / 60000) 
+        : 0;
       console.log(
-        `[${moment().format("YYYY-MM-DD HH:mm:ss")}] [Antares] No change detected, skipping insert`
+        `[${moment().format("YYYY-MM-DD HH:mm:ss")}] [Antares] ⏭️ Data sama, skip save (${minutesSinceLastSave} menit sejak save terakhir, force save pada 30 menit)`
       );
       return false;
     }
@@ -183,8 +229,12 @@ async function saveSensorDataIfChanged(sensorData) {
       ph: normalizedData.ph,
     });
 
+    // Update last saved time
+    lastSavedTime = Date.now();
+
+    const saveReason = dataIsSame ? "FORCE SAVE (30 menit)" : "DATA CHANGED";
     console.log(
-      `[${moment().format("YYYY-MM-DD HH:mm:ss")}] [Antares] New sensor data saved (normalized: temp=${normalizedData.temperature}°C, hum=${normalizedData.humidity}%, ec=${normalizedData.ec}mS/cm, ph=${normalizedData.ph})`
+      `[${moment().format("YYYY-MM-DD HH:mm:ss")}] [Antares] ✅ Saved [${saveReason}] (normalized: temp=${normalizedData.temperature}°C, hum=${normalizedData.humidity}%, ec=${normalizedData.ec}mS/cm, ph=${normalizedData.ph})`
     );
     return true;
   } catch (error) {
@@ -208,7 +258,7 @@ function hasNullValues(sensorData) {
 
 /**
  * Main function to fetch and save sensor data
- * Called by the scheduler
+ * Called by the scheduler every 5 minutes
  * If data contains null values, retry after 10 seconds
  */
 async function fetchAndSaveSensorData(retryCount = 0) {
@@ -271,4 +321,5 @@ module.exports = {
   parseSensorValue,
   fetchAllSensorData,
   saveSensorDataIfChanged,
+  initLastSavedTime,
 };

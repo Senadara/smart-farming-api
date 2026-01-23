@@ -12,12 +12,8 @@ module.exports = {
       supportBigNumbers: true,
       bigNumberStrings: true,
     },
-    // timezone: "+07:00",
+    timezone: "+07:00",
     // logging: (...args) => console.log(...args),
-    // dialectOptions: {
-    //   useUTC: false,
-    // },
-    // timezone: "Asia/Jakarta",
   },
   test: {
     dialect: "sqlite",
