@@ -3,7 +3,7 @@ const sequelize = require("../../model/index");
 const { getPaginationOptions } = require("../../utils/paginationUtils");
 const komoditas = require("../../model/farm/komoditas");
 const model = require("../../model/index");
-const { required } = require("yargs");
+// const { required } = require("yargs");
 
 const db = sequelize.sequelize;
 

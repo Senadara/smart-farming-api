@@ -30,19 +30,18 @@ module.exports = {
     timezone: "+07:00",
     logging: false,
     dialectOptions: {
-      ssl: {
-        require: true,
-        rejectUnauthorized: false,
-      },
+      ...(process.env.DB_SSL === "true"
+        ? {
+            ssl: {
+              require: true,
+              rejectUnauthorized: false,
+            },
+          }
+        : {}),
       charset: "utf8mb4",
       collation: "utf8mb4_unicode_ci",
       supportBigNumbers: true,
       bigNumberStrings: true,
     },
-
-    // dialectOptions: {
-    //   useUTC: false,
-    // },
-    // timezone: "Asia/Jakarta",
   },
 };
