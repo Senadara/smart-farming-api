@@ -1,11 +1,9 @@
 const express = require("express");
 const router = express.Router();
-const ayamController = require("../../controller/farm/ayamController");
+// const ayamController = require("../../controller/farm/ayamController");
 
-// GET /api/ayam/latest - Get latest ayam sensor data
-router.get("/latest", ayamController.getLatest);
-
-// GET /api/ayam/history - Get ayam sensor data history
-router.get("/history", ayamController.getHistory);
+// [DEPRECATED] Routes disabled — ayam_sensor_data table dropped, replaced by iot_sensor_data schema.
+// router.get("/latest", ayamController.getLatest);
+// router.get("/history", ayamController.getHistory);
 
 module.exports = router;
