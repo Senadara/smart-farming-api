@@ -28,6 +28,10 @@ module.exports = (sequelize, DataTypes) => {
 
     Gejala.associate = function (models) {
         // relasi bisa ditambahkan di sini
+        Gejala.hasMany(models.PenyakitGejala, {
+            foreignKey: 'gejala_id',
+            as: 'penyakit_gejala'
+        });
     };
 
     return Gejala;

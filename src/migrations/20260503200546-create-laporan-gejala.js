@@ -11,11 +11,11 @@ module.exports = {
         allowNull: false,
         unique: true,
       },
-      sakit_id: {
+      penyakit_ayam_id: {
         type: Sequelize.UUID,
         allowNull: false,
         references: {
-          model: 'sakit',
+          model: 'penyakit_ayam',
           key: 'id',
         },
       },

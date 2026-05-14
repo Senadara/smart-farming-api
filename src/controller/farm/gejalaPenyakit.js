@@ -1,6 +1,7 @@
 const sequelize = require("../../model/index");
 
 const Gejala = sequelize.Gejala;
+const penyakitGejala = sequelize.PenyakitGejala;
 
 const getGejalaPenyakit = async (req, res) => {
     try {
