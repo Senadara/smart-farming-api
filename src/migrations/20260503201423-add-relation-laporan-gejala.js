@@ -9,6 +9,13 @@ module.exports = {
       allowNull: true,
     });
 
+    // Perbaiki orphaned rows (jika ada data lama di 'sakit' yang tidak ada di 'penyakit_ayam')
+    await queryInterface.sequelize.query(`
+      UPDATE sakit 
+      SET diagnosisPenyakit = NULL 
+      WHERE diagnosisPenyakit NOT IN (SELECT id FROM penyakit_ayam)
+    `);
+
     await queryInterface.addConstraint('sakit', {
       fields: ['diagnosisPenyakit'],
       type: 'foreign key',
