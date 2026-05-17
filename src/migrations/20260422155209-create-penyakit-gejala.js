@@ -1,0 +1,57 @@
+'use strict';
+
+/** @type {import('sequelize-cli').Migration} */
+module.exports = {
+  async up (queryInterface, Sequelize) {
+    await queryInterface.createTable('penyakit_gejala', {
+      id: {
+        type: Sequelize.UUID,
+        defaultValue: Sequelize.UUIDV4,
+        primaryKey: true,
+        allowNull: false,
+        unique: true,
+      },
+      penyakit_id: {
+        type: Sequelize.UUID,
+        allowNull: false,
+        references: {
+          model: 'penyakit_ayam',
+          key: 'id',
+        },
+      },
+      gejala_id: {
+        type: Sequelize.UUID,
+        allowNull: false,
+        references: {
+          model: 'gejala',
+          key: 'id',
+        },
+      },
+      cf_weight: {
+        type: Sequelize.DECIMAL(5, 2),
+        allowNull: false,
+      },
+      disease_frequency: {
+        type: Sequelize.INTEGER,
+        allowNull: false,
+      },
+      total_disease: {
+        type: Sequelize.INTEGER,
+        allowNull: false,
+      },
+      metode: {
+        type: Sequelize.STRING(255),
+        allowNull: false,
+      },
+      cf_updated_at: {
+        type: Sequelize.DATE,
+        allowNull: false,
+        defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
+      },
+    })
+  },
+
+  async down (queryInterface, Sequelize) {
+    await queryInterface.dropTable('penyakit_gejala');
+  }
+};

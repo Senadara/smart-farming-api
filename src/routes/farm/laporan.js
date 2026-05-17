@@ -1,9 +1,11 @@
 const express = require("express");
 const router = express.Router();
 const laporanController = require("../../controller/farm/laporan.js");
+const penyakitAyamController = require("../../controller/farm/penyakitAyamController.js");
 const auditMiddleware = require("../../middleware/auditTrail.js");
 
 const sequelize = require("../../model/index");
+const { getRiwayatPenyakitAyam } = require("../../controller/farm/penyakitAyamController.js");
 const db = sequelize.sequelize;
 const Laporan = sequelize.Laporan;
 
@@ -97,6 +99,16 @@ router.get(
 router.get(
   "/grade-summary-by-komoditas",
   laporanController.getGradeSummaryByKomoditas
+);
+
+router.get(
+  "/riwayat-penyakit-ayam", 
+  penyakitAyamController.getRiwayatPenyakitAyam
+);
+
+router.get(
+  "/riwayat-penyakit-ayam/:id", 
+  penyakitAyamController.getRiwayatPenyakitAyamById
 );
 
 module.exports = router;

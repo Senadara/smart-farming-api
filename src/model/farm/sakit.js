@@ -9,8 +9,8 @@ module.exports = (sequelize, DataTypes) => {
                 allowNull: false,
                 unique: true,
             },
-            penyakit: {
-                type: DataTypes.STRING,
+            diagnosisPenyakit: {
+                type: DataTypes.UUID,
                 allowNull: false,
             },
             isDeleted: {
@@ -26,6 +26,7 @@ module.exports = (sequelize, DataTypes) => {
 
     Sakit.associate = (models) => {
         Sakit.belongsTo(models.Laporan);
+        Sakit.belongsTo(models.PenyakitAyam, { foreignKey: 'diagnosisPenyakit' });
     };
 
     return Sakit;
