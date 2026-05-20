@@ -10,6 +10,26 @@ module.exports = {
 				primaryKey: true,
 				allowNull: false,
 			},
+			userId: {
+				type: Sequelize.UUID,
+				allowNull: true,
+				references: {
+					model: "user",
+					key: "id",
+				},
+				onUpdate: "CASCADE",
+				onDelete: "SET NULL",
+			},
+			name: {
+				type: Sequelize.STRING(100),
+				allowNull: false,
+				defaultValue: "-",
+			},
+			role: {
+				type: Sequelize.STRING(50),
+				allowNull: false,
+				defaultValue: "-",
+			},
 			email: {
 				type: Sequelize.STRING(100),
 				allowNull: false,
