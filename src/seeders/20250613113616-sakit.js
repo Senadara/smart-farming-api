@@ -36,7 +36,8 @@ module.exports = {
         {
           id: "saki001-0000-0000-0000-000000000001",
           laporanId: "lapor006-0000-0000-0000-000000000006",
-          penyakit: "Infeksi saluran pernapasan",
+          diagnosisPenyakit: null,
+          status: "Belum ditangani",
           isDeleted: false,
           createdAt: new Date(),
           updatedAt: new Date(),

@@ -5,6 +5,7 @@ module.exports = {
   async up(queryInterface, Sequelize) {
     const jenisBudidayaId1 = "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d"; // Ayam Broiler
     const jenisBudidayaId2 = "d4e5f6a7-b8c9-4d5e-1f2a-3b4c5d6e7f8a"; // Sawi
+    const owner_id = "fc571afa-e66b-437b-8b15-dce68edee3f3"; // ID user tipe penanggung jawab
 
     await queryInterface.bulkInsert(
       "unitBudidaya",
@@ -12,6 +13,7 @@ module.exports = {
         {
           id: "unit001-0000-0000-0000-000000000001",
           jenisBudidayaId: jenisBudidayaId1,
+          owner_id: owner_id,
           nama: "Kandang Ayam Broiler A",
           lokasi: "Blok A, Lantai 1",
           tipe: "kolektif",
@@ -28,6 +30,7 @@ module.exports = {
         {
           id: "unit002-0000-0000-0000-000000000002",
           jenisBudidayaId: jenisBudidayaId1,
+          owner_id: owner_id,
           nama: "Kandang Ayam Broiler B",
           lokasi: "Blok B, Lantai 1",
           tipe: "kolektif",
@@ -44,6 +47,7 @@ module.exports = {
         {
           id: "unit003-0000-0000-0000-000000000003",
           jenisBudidayaId: jenisBudidayaId2,
+          owner_id: owner_id,
           nama: "Bedeng Sawi A",
           lokasi: "Rooftop, Area 1",
           tipe: "kolektif",
@@ -60,6 +64,7 @@ module.exports = {
         {
           id: "unit004-0000-0000-0000-000000000004",
           jenisBudidayaId: jenisBudidayaId2,
+          owner_id: owner_id,
           nama: "Bedeng Sawi B",
           lokasi: "Rooftop, Area 2",
           tipe: "kolektif",
