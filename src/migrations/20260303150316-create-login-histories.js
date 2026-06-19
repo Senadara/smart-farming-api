@@ -57,9 +57,11 @@ module.exports = {
 		// Composite uniqueness (email + ipAddress + userAgent) enforced at
 		// application level via Eloquent updateOrCreate, not DB level,
 		// because userAgent is TEXT type (not indexable without prefix in MySQL).
+		/*
 		await queryInterface.addIndex("login_histories", ["email", "ipAddress"], {
 			name: "login_histories_email_ip_idx",
 		});
+		*/
 	},
 
 	async down(queryInterface, Sequelize) {

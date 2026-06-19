@@ -332,6 +332,7 @@ const getRiwayatPelaporanHarianTernak = (req, res) => {
         ],
       },
     ],
+
     dataFormatter: (harianTernak) => ({
       laporanId: harianTernak.Laporan ? harianTernak.Laporan.id : null,
       text: harianTernak.Laporan
@@ -572,50 +573,86 @@ const getStatistikPenyebabKematian = async (req, res) => {
   }
 };
 
-const getRiwayatPelaporanSakitPerJenisBudidaya = (req, res) => {
+const DaftarGejala = sequelize.DaftarGejala;
+const Gejala = sequelize.Gejala;
+
+const getRiwayatPelaporanSakitPerJenisBudidaya = async (req, res) => {
   const { jenisBudidayaId } = req.params;
   const page = parseInt(req.query.page, 10) || 1;
   const limit = parseInt(req.query.limit, 10) || 5;
+  const offset = (page - 1) * limit;
 
-  return fetchPaginatedHistory({
-    req,
-    res,
-    page,
-    limit,
-    mainModel: Sakit,
-    baseWhereClause: { isDeleted: false },
-    attributes: ["id", "penyakit", "createdAt", "laporanId"],
-    includeItems: [
-      {
-        model: Laporan,
-        attributes: ["id", "judul", "gambar", "createdAt", "objekBudidayaId"],
-        required: true,
-        where: { isDeleted: false },
-        include: [
-          { model: User, as: "user", attributes: ["name"], required: false },
-          {
-            model: UnitBudidaya,
-            attributes: [],
-            required: true,
-            where: { jenisBudidayaId, isDeleted: false },
-          },
-        ],
-      },
-    ],
-    dataFormatter: (sakit) => ({
-      laporanId: sakit.Laporan ? sakit.Laporan.id : null,
-      text: sakit.Laporan ? sakit.Laporan.judul : "Laporan Sakit Ternak",
-      gambar: sakit.Laporan ? sakit.Laporan.gambar : null,
-      person:
-        sakit.Laporan && sakit.Laporan.user
-          ? sakit.Laporan.user.name
-          : "Petugas Tidak Diketahui",
-      date: sakit.Laporan ? sakit.Laporan.createdAt : sakit.createdAt,
-      time: sakit.Laporan ? sakit.Laporan.createdAt : sakit.createdAt,
-    }),
-    order: [[{ model: Laporan, as: "Laporan" }, "createdAt", "DESC"]],
-    successMessage: "Riwayat pelaporan sakit berhasil diambil.",
-  });
+  try {
+    const { count, rows } = await Sakit.findAndCountAll({
+      where: { isDeleted: false },
+      attributes: ["id", "diagnosisPenyakit", "status", "createdAt", "laporanId"],
+      include: [
+        {
+          model: Laporan,
+          attributes: ["id", "judul", "gambar", "catatan", "createdAt", "objekBudidayaId"],
+          required: true,
+          where: { isDeleted: false },
+          include: [
+            {
+              model: UnitBudidaya,
+              attributes: [],
+              required: true,
+              where: { jenisBudidayaId, isDeleted: false },
+            },
+          ],
+        },
+        
+        {
+          model: DaftarGejala,
+          attributes: ["id"],
+          required: false,
+          include: [{
+            model: Gejala,
+            attributes: ["gejala1", "gejala2", "gejala3", "gejala4"],
+            required: false,
+          }],
+        },
+      ],
+      order: [["createdAt", "DESC"]],
+      distinct: true,
+      limit,
+      offset,
+    });
+
+    const data = rows.map((sakit) => {
+      const gejala = [];
+      if (sakit.DaftarGejalas) {
+        sakit.DaftarGejalas.forEach((dg) => {
+          if (dg.Gejala) {
+            ["gejala1", "gejala2", "gejala3", "gejala4"].forEach((key) => {
+              if (dg.Gejala[key] && dg.Gejala[key].trim() !== "" && dg.Gejala[key] !== "-") {
+                gejala.push(dg.Gejala[key].trim());
+              }
+            });
+          }
+        });
+      }
+      return {
+        id: sakit.id,
+        gambar: sakit.Laporan ? sakit.Laporan.gambar : null,
+        catatan: sakit.Laporan ? sakit.Laporan.catatan : null,
+        diagnosisPenyakit: sakit.diagnosisPenyakit,
+        gejala: gejala,
+        tanggal: sakit.createdAt,
+        status: sakit.status,
+      };
+    });
+
+    return res.status(200).json({
+      status: true,
+      message: "Riwayat pelaporan sakit berhasil diambil.",
+      data,
+      pagination: { totalItems: count, currentPage: page, totalPages: Math.ceil(count / limit) },
+    });
+  } catch (error) {
+    console.error("Error getRiwayatPelaporanSakitPerJenisBudidaya:", error);
+    return res.status(500).json({ status: false, message: "Gagal mengambil riwayat.", detail: error.message });
+  }
 };
 
 const getStatistikKematian = async (req, res) => {
@@ -826,21 +863,19 @@ const getRiwayatPemberianNutrisiPerJenisBudidaya = (req, res) => {
     ],
     dataFormatter: (dp) => ({
       laporanId: dp.Laporan ? dp.Laporan.id : null,
-      name: `${dp.inventaris ? dp.inventaris.nama : "Item Tidak Dikenal"} - ${
-        dp.jumlah || ""
-      } ${
-        dp.inventaris && dp.inventaris.Satuan
+      name: `${dp.inventaris ? dp.inventaris.nama : "Item Tidak Dikenal"} - ${dp.jumlah || ""
+        } ${dp.inventaris && dp.inventaris.Satuan
           ? dp.inventaris.Satuan.lambang
           : ""
-      }`.trim(),
+        }`.trim(),
       category: dp.tipe
         ? dp.tipe.charAt(0).toUpperCase() + dp.tipe.slice(1)
         : "Nutrisi",
       gambar: dp.Laporan
         ? dp.Laporan.gambar
         : dp.inventaris
-        ? dp.inventaris.gambar
-        : null,
+          ? dp.inventaris.gambar
+          : null,
       person:
         dp.Laporan && dp.Laporan.user
           ? dp.Laporan.user.name
@@ -1220,8 +1255,7 @@ const getStatistikHarianJenisBudidaya = async (req, res) => {
       let perluPerhatianDetailsCombined = [];
       if (tanamanPerluPerhatianDenganDataList.length > 0) {
         perluPerhatianDetailsCombined.push(
-          `${
-            tanamanPerluPerhatianDenganDataList.length
+          `${tanamanPerluPerhatianDenganDataList.length
           } tanaman berdasarkan laporan terakhir (${getPlantListSummary(
             tanamanPerluPerhatianDenganDataList
           )})`
@@ -1229,8 +1263,7 @@ const getStatistikHarianJenisBudidaya = async (req, res) => {
       }
       if (tanamanPerluPerhatianTanpaDataList.length > 0) {
         perluPerhatianDetailsCombined.push(
-          `${
-            tanamanPerluPerhatianTanpaDataList.length
+          `${tanamanPerluPerhatianTanpaDataList.length
           } tanaman karena tidak ada data laporan terbaru (${getPlantListSummary(
             tanamanPerluPerhatianTanpaDataList
           )})`
@@ -1567,8 +1600,7 @@ const getRiwayatPelaporanPanenTernak = (req, res) => {
       laporanId: panen.Laporan ? panen.Laporan.id : null,
       text: panen.Laporan ? panen.Laporan.judul : "Laporan panen Ternak",
       komoditas: panen.komoditas
-        ? `${panen.komoditas.nama} - ${panen.jumlah || ""} ${
-            panen.komoditas.Satuan ? panen.komoditas.Satuan.lambang : ""
+        ? `${panen.komoditas.nama} - ${panen.jumlah || ""} ${panen.komoditas.Satuan ? panen.komoditas.Satuan.lambang : ""
           }`.trim()
         : "Komoditas Tidak Diketahui",
       gambar: panen.Laporan ? panen.Laporan.gambar : null,
@@ -1628,8 +1660,7 @@ const getRiwayatPelaporanPanenTanaman = (req, res) => {
       laporanId: panen.Laporan ? panen.Laporan.id : null,
       text: panen.Laporan ? panen.Laporan.judul : "Laporan panen Tanaman",
       komoditas: panen.komoditas
-        ? `${panen.komoditas.nama} - ${panen.jumlah || ""} ${
-            panen.komoditas.Satuan ? panen.komoditas.Satuan.lambang : ""
+        ? `${panen.komoditas.nama} - ${panen.jumlah || ""} ${panen.komoditas.Satuan ? panen.komoditas.Satuan.lambang : ""
           }`.trim()
         : "Komoditas Tidak Diketahui",
       gambar: panen.Laporan ? panen.Laporan.gambar : null,

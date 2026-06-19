@@ -22,6 +22,8 @@ jest.mock('../../../model/index', () => {
     HarianKebun: createMockModel('HarianKebun'),
     HarianTernak: createMockModel('HarianTernak'),
     Sakit: createMockModel('Sakit'),
+    Gejala: createMockModel('Gejala'),
+    DaftarGejala: createMockModel('DaftarGejala'),
     Kematian: createMockModel('Kematian'),
     Vitamin: createMockModel('Vitamin'),
     PanenKebun: createMockModel('PanenKebun'),
@@ -47,6 +49,8 @@ jest.mock('../../../model/index', () => {
       HarianKebun: createMockModel('HarianKebun'),
       HarianTernak: createMockModel('HarianTernak'),
       Sakit: createMockModel('Sakit'),
+      Gejala: createMockModel('Gejala'),
+      DaftarGejala: createMockModel('DaftarGejala'),
       Kematian: createMockModel('Kematian'),
       Vitamin: createMockModel('Vitamin'),
       PanenKebun: createMockModel('PanenKebun'),
@@ -80,7 +84,6 @@ app.use((req, res, next) => {
 
 app.post('/laporan/harian-kebun', laporanController.createLaporanHarianKebun);
 app.post('/laporan/harian-ternak', laporanController.createLaporanHarianTernak);
-app.post('/laporan/sakit', laporanController.createLaporanSakit);
 app.post('/laporan/kematian', laporanController.createLaporanKematian);
 app.post('/laporan/vitamin', laporanController.createLaporanVitamin);
 app.post('/laporan/panen', laporanController.createLaporanPanen);

@@ -35,6 +35,9 @@ const Grade = sequelize.Grade;
 
 const Produk = sequelize.Produk;
 
+const DaftarGejala = sequelize.DaftarGejala;
+const Gejala = sequelize.Gejala;
+
 const createLaporanHarianKebun = async (req, res) => {
   const t = await db.transaction();
 
@@ -69,7 +72,7 @@ const createLaporanHarianKebun = async (req, res) => {
           : harianKebun.kondisiDaun,
       statusTumbuh:
         harianKebun.statusTumbuh === undefined ||
-        harianKebun.statusTumbuh === ""
+          harianKebun.statusTumbuh === ""
           ? null
           : harianKebun.statusTumbuh,
     };
@@ -258,6 +261,7 @@ const createLaporanHarianTernak = async (req, res) => {
   }
 };
 
+// create laporan sakit
 const createLaporanSakit = async (req, res) => {
   const t = await db.transaction();
 
@@ -277,20 +281,42 @@ const createLaporanSakit = async (req, res) => {
     const laporanSakit = await Sakit.create(
       {
         LaporanId: data.id,
-        penyakit: sakit.penyakit,
+        diagnosisPenyakit: sakit.diagnosisPenyakit,
+        status: sakit.status,
+      },
+      { transaction: t }
+    );
+
+    const gejala = await Gejala.create(
+      {
+        gejala1: sakit.gejala1,
+        gejala2: sakit.gejala2,
+        gejala3: sakit.gejala3,
+        gejala4: sakit.gejala4,
+      },
+      { transaction: t }
+    );
+
+    const daftarGejala = await DaftarGejala.create(
+      {
+        sakitId: laporanSakit.id,
+        gejalaId: gejala.id,
+        catatan: sakit.catatan,
       },
       { transaction: t }
     );
 
     await t.commit();
 
-    res.locals.createdData = { data, laporanSakit };
+    res.locals.createdData = { data, laporanSakit, gejala, daftarGejala };
 
     return res.status(201).json({
       message: "Successfully created new laporan data",
       data: {
         data,
         laporanSakit,
+        gejala,
+        daftarGejala,
       },
     });
   } catch (error) {
@@ -1119,9 +1145,9 @@ const getHasilPanenWithGrades = async (req, res) => {
           efisiensiPanen:
             panenKebun.estimasiPanen > 0
               ? (
-                  (panenKebun.realisasiPanen / panenKebun.estimasiPanen) *
-                  100
-                ).toFixed(2)
+                (panenKebun.realisasiPanen / panenKebun.estimasiPanen) *
+                100
+              ).toFixed(2)
               : 0,
         },
         rincianGrade: gradeSummary,
@@ -1479,53 +1505,45 @@ const getLaporanSakitById = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const laporan = await Laporan.findOne({
+    const laporanSakit = await Sakit.findOne({
       where: {
         id: id,
         isDeleted: false,
-        tipe: "sakit",
       },
+      attributes: ["id", ["diagnosisPenyakit", "nama"], "status"],
       include: [
         {
-          model: Sakit,
-          attributes: ["penyakit"],
-          require: true,
+          model: Laporan,
+          attributes: ["gambar"],
         },
         {
-          model: ObjekBudidaya,
-          attributes: ["namaId"],
-          require: false,
-        },
-        {
-          model: UnitBudidaya,
-          attributes: ["nama"],
-          require: true,
+          model: DaftarGejala,
+          attributes: ["id"],
+          required: false,
           include: [
             {
-              model: JenisBudidaya,
-              attributes: ["nama", "tipe"],
-              require: true,
+              model: Gejala,
+              attributes: ["gejala1", "gejala2", "gejala3", "gejala4"],
+              required: false,
             },
           ],
-        },
-        {
-          model: User,
-          as: "user",
-          attributes: ["name"],
-          require: true,
         },
       ],
     });
 
-    if (!laporan) {
+    if (!laporanSakit) {
       return res.status(404).json({
-        message: "Laporan not found",
+        message: "Data Sakit not found",
       });
     }
 
+    const responseData = laporanSakit.toJSON();
+    responseData.gambar = responseData.Laporan ? responseData.Laporan.gambar : null;
+    delete responseData.Laporan;
+
     return res.status(200).json({
-      message: "Successfully retrieved laporan data",
-      data: laporan,
+      message: "Successfully retrieved sakit data",
+      data: responseData,
     });
   } catch (error) {
     res.status(500).json({
