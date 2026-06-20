@@ -53,12 +53,8 @@ module.exports = {
         {
           id: "saki001-0000-0000-0000-000000000001",
           laporanId: "lapor006-0000-0000-0000-000000000006",
-<<<<<<< HEAD
           diagnosisPenyakit: penyakitAyamId,
-=======
-          diagnosisPenyakit: null,
           status: "Belum ditangani",
->>>>>>> e120d8830553228e491295326ba963e927eb933b
           isDeleted: false,
           createdAt: new Date(),
           updatedAt: new Date(),
