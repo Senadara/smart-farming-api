@@ -13,7 +13,10 @@ module.exports = {
       bigNumberStrings: true,
     },
     timezone: "+07:00",
-    // logging: (...args) => console.log(...args),
+    logging:
+      process.env.SEQUELIZE_LOGGING === "true"
+        ? (...args) => console.log(...args)
+        : false,
   },
   test: {
     dialect: "sqlite",
