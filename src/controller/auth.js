@@ -48,7 +48,10 @@ const login = async (req, res, next) => {
         message: "Email belum terdaftar",
       });
     }
-    if (!(await compare(data.password, userExist.password))) {
+    // Laravel generates bcrypt hashes with the $2y$ prefix while Node bcrypt
+    // expects $2a$ or $2b$. The payload is otherwise fully compatible.
+    const passwordHash = userExist.password?.replace(/^\$2y\$/, "$2b$");
+    if (!passwordHash || !(await compare(data.password, passwordHash))) {
       return res.status(400).json({
         status: false,
         message: "Password salah, silahkan coba lagi",
@@ -120,7 +123,7 @@ const register = async (req, res, next) => {
     phone: "required|phone",
     password: "required",
     confirmPassword: "required|same:password",
-    role: "required|contains:inventor,user,penjual,petugas,pjawab",
+    role: "required|contains:inventor,user,penjual,petugas,pjawab,supplier",
   };
 
   try {

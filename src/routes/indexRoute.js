@@ -14,7 +14,7 @@ router.use("/auth", authRouter);
 router.use("/midtrans", webhookRouter);
 
 router.use("/farm", authenticate(["pjawab", "inventor", "petugas", "penjual"]), farmRouter);
-router.use("/store", authenticate(["admin", "pjawab", "penjual", "user"]), storeRouter);
+router.use("/store", authenticate(["admin", "pjawab", "penjual", "supplier", "user"]), storeRouter);
 
 
 module.exports = router;
