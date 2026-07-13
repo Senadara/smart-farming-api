@@ -5,9 +5,7 @@
 
 const mqtt = require("mqtt");
 
-// Import database model
-const sequelize = require("../src/model/index");
-const AyamSensorData = sequelize.AyamSensorData;
+const { saveIotPayload } = require("../src/services/iotPayloadService");
 
 // Konfigurasi HiveMQ
 const MQTT_CONFIG = {
@@ -99,10 +97,17 @@ const saveIfChanged = async (data) => {
   }
 
   try {
-    await AyamSensorData.create({
-      temperature: normalizedData.temperature,
-      humidity: normalizedData.humidity,
+    const result = await saveIotPayload({
+      deviceCode: process.env.MQTT_DEVICE_CODE || null,
+      payload: normalizedData,
+      timestamp: new Date(),
+      source: "mqtt",
     });
+
+    if (result.inserted <= 0) {
+      console.log(`[${getTimestamp()}] [MQTT] No IoT rows saved: ${result.reason || "mapping not matched"}`);
+      return false;
+    }
 
     // Update cache dengan data yang sudah dinormalisasi
     lastSavedData = {
@@ -122,20 +127,7 @@ const saveIfChanged = async (data) => {
  * Load data terakhir dari database untuk inisialisasi cache
  */
 const initLastSavedData = async () => {
-  try {
-    const latest = await AyamSensorData.findOne({
-      where: { isDeleted: false },
-      order: [["createdAt", "DESC"]],
-    });
-    if (latest) {
-      lastSavedData = {
-        temperature: latest.temperature,
-        humidity: latest.humidity,
-      };
-    }
-  } catch (error) {
-    console.error(`[MQTT] Error loading last data: ${error.message}`);
-  }
+  lastSavedData = null;
 };
 
 /**

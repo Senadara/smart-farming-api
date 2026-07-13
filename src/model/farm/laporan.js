@@ -59,6 +59,12 @@ module.exports = (sequelize, DataTypes) => {
     Laporan.hasOne(models.Sakit);
     Laporan.hasOne(models.Hama);
     Laporan.hasOne(models.PanenKebun);
+    if (models.DailyReportMetric) {
+      Laporan.hasMany(models.DailyReportMetric, {
+        foreignKey: "laporan_id",
+        as: "dailyReportMetrics",
+      });
+    }
   };
 
   return Laporan;

@@ -14,6 +14,7 @@ const JenisBudidaya = sequelize.JenisBudidaya;
 
 const HarianKebun = sequelize.HarianKebun;
 const HarianTernak = sequelize.HarianTernak;
+const DailyReportMetric = sequelize.DailyReportMetric;
 
 const Sakit = sequelize.Sakit;
 const Kematian = sequelize.Kematian;
@@ -37,6 +38,10 @@ const Produk = sequelize.Produk;
 
 const DaftarGejala = sequelize.DaftarGejala;
 const Gejala = sequelize.Gejala;
+const {
+  mergeMetrics,
+  saveDailyReportMetrics,
+} = require("../../services/dailyReportMetricService");
 
 const createLaporanHarianKebun = async (req, res) => {
   const t = await db.transaction();
@@ -147,15 +152,29 @@ const createLaporanHarianKebun = async (req, res) => {
       transaction: t,
     });
 
+    const metrics = mergeMetrics(
+      {
+        penyiraman: { value: finalHarianData.penyiraman ? 1 : 0, unit: "boolean" },
+        pruning: { value: finalHarianData.pruning ? 1 : 0, unit: "boolean" },
+        repotting: { value: finalHarianData.repotting ? 1 : 0, unit: "boolean" },
+        tinggi_tanaman: { value: Number(finalHarianData.tinggiTanaman || 0), unit: "cm" },
+      },
+      req.body.metrics,
+      harianKebun?.metrics
+    );
+
+    const dynamicMetrics = await saveDailyReportMetrics(data.id, metrics, t);
+
     await t.commit();
 
-    res.locals.createdData = { data, harian };
+    res.locals.createdData = { data, harian, metrics: dynamicMetrics };
 
     return res.status(201).json({
       message: "Successfully created new laporan data",
       data: {
         data,
         harian,
+        metrics: dynamicMetrics,
       },
     });
   } catch (error) {
@@ -261,15 +280,27 @@ const createLaporanHarianTernak = async (req, res) => {
       { transaction: t }
     );
 
+    const metrics = mergeMetrics(
+      {
+        pakan: { value: pakanKg, unit: "kg" },
+        cek_kandang: { value: Boolean(harianTernak.cekKandang) ? 1 : 0, unit: "boolean" },
+      },
+      req.body.metrics,
+      harianTernak.metrics
+    );
+
+    const dynamicMetrics = await saveDailyReportMetrics(laporan.id, metrics, t);
+
     await t.commit();
 
-    res.locals.createdData = { data, harian };
+    res.locals.createdData = { data, harian, metrics: dynamicMetrics };
 
     return res.status(201).json({
       message: "Successfully created new laporan data",
       data: {
         data,
         harian,
+        metrics: dynamicMetrics,
       },
     });
   } catch (error) {
@@ -1526,6 +1557,16 @@ const getLaporanHarianKebunById = async (req, res) => {
           },
           require: true,
         },
+        ...(DailyReportMetric
+          ? [
+              {
+                model: DailyReportMetric,
+                as: "dailyReportMetrics",
+                where: { isDeleted: false },
+                required: false,
+              },
+            ]
+          : []),
         {
           model: ObjekBudidaya,
           attributes: ["namaId"],
@@ -1588,6 +1629,16 @@ const getLaporanHarianTernakById = async (req, res) => {
           },
           require: true,
         },
+        ...(DailyReportMetric
+          ? [
+              {
+                model: DailyReportMetric,
+                as: "dailyReportMetrics",
+                where: { isDeleted: false },
+                required: false,
+              },
+            ]
+          : []),
         {
           model: UnitBudidaya,
           attributes: ["nama"],
