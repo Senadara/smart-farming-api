@@ -43,6 +43,20 @@ const {
   saveDailyReportMetrics,
 } = require("../../services/dailyReportMetricService");
 
+const hasNumericValue = (value) =>
+  value !== undefined && value !== null && value !== "";
+
+const parseOptionalNumber = (value) => {
+  if (!hasNumericValue(value)) {
+    return null;
+  }
+
+  return Number(value);
+};
+
+const percentageOf = (value, total) =>
+  value === null || total <= 0 ? null : Number(((value / total) * 100).toFixed(2));
+
 const createLaporanHarianKebun = async (req, res) => {
   const t = await db.transaction();
 
@@ -599,15 +613,6 @@ const createLaporanPanen = async (req, res) => {
   try {
     const { panen, detailPanen } = req.body;
     const detailPanenIds = Array.isArray(detailPanen) ? detailPanen : [];
-    const jumlahPanen = Number(panen?.jumlah);
-    const beratPanen =
-      panen?.berat === undefined || panen?.berat === null || panen?.berat === ""
-        ? Number((jumlahPanen * 0.06).toFixed(2))
-        : Number(panen.berat);
-    const jumlahHewan =
-      panen?.jumlahHewan === undefined || panen?.jumlahHewan === null || panen?.jumlahHewan === ""
-        ? 0
-        : Number(panen.jumlahHewan);
 
     if (!panen || !panen.komoditasId) {
       await t.rollback();
@@ -616,17 +621,24 @@ const createLaporanPanen = async (req, res) => {
       });
     }
 
-    if (!Number.isFinite(jumlahPanen) || jumlahPanen <= 0) {
+    const jumlahPanen = Number(panen.jumlah);
+    const beratPanen = Number(panen.berat);
+    const jumlahHewan =
+      panen?.jumlahHewan === undefined || panen?.jumlahHewan === null || panen?.jumlahHewan === ""
+        ? 0
+        : Number(panen.jumlahHewan);
+
+    if (!Number.isInteger(jumlahPanen) || jumlahPanen <= 0) {
       await t.rollback();
       return res.status(400).json({
-        message: "Jumlah panen harus berupa angka lebih dari 0.",
+        message: "Jumlah panen wajib diisi sebagai angka bulat butir lebih dari 0.",
       });
     }
 
-    if (!Number.isFinite(beratPanen) || beratPanen < 0) {
+    if (!Number.isFinite(beratPanen) || beratPanen <= 0) {
       await t.rollback();
       return res.status(400).json({
-        message: "Berat panen harus berupa angka kilogram minimal 0.",
+        message: "Berat panen wajib diisi sebagai angka kilogram lebih dari 0.",
       });
     }
 
@@ -640,16 +652,53 @@ const createLaporanPanen = async (req, res) => {
     const rincianGrade = Array.isArray(panen.rincianGrade) ? panen.rincianGrade : [];
     const rincianGradeData = [];
     for (const rincian of rincianGrade) {
-      const jumlahGrade = Number(rincian.jumlah);
-      if (!rincian.gradeId || !Number.isFinite(jumlahGrade) || jumlahGrade < 0) {
+      const jumlahGrade = parseOptionalNumber(rincian.jumlah);
+      const beratGrade = parseOptionalNumber(rincian.berat);
+
+      if (!rincian.gradeId || (jumlahGrade === null && beratGrade === null)) {
         await t.rollback();
         return res.status(400).json({
-          message: "Rincian grade harus memiliki gradeId dan jumlah angka minimal 0.",
+          message: "Rincian grade wajib memiliki gradeId dan minimal salah satu dari jumlah atau berat.",
         });
       }
+
+      if (jumlahGrade !== null && (!Number.isInteger(jumlahGrade) || jumlahGrade < 0)) {
+        await t.rollback();
+        return res.status(400).json({
+          message: "Jumlah grade harus berupa angka bulat butir minimal 0.",
+        });
+      }
+
+      if (beratGrade !== null && (!Number.isFinite(beratGrade) || beratGrade < 0)) {
+        await t.rollback();
+        return res.status(400).json({
+          message: "Berat grade harus berupa angka kilogram minimal 0.",
+        });
+      }
+
       rincianGradeData.push({
         gradeId: rincian.gradeId,
         jumlah: jumlahGrade,
+        berat: beratGrade,
+        persentaseJumlah: percentageOf(jumlahGrade, jumlahPanen),
+        persentaseBerat: percentageOf(beratGrade, beratPanen),
+      });
+    }
+
+    const totalGradeJumlah = rincianGradeData.reduce((sum, item) => sum + (item.jumlah ?? 0), 0);
+    const totalGradeBerat = rincianGradeData.reduce((sum, item) => sum + (item.berat ?? 0), 0);
+
+    if (totalGradeJumlah > jumlahPanen) {
+      await t.rollback();
+      return res.status(400).json({
+        message: "Total jumlah telur pada rincian grade tidak boleh melebihi jumlah panen.",
+      });
+    }
+
+    if (Number(totalGradeBerat.toFixed(4)) > beratPanen) {
+      await t.rollback();
+      return res.status(400).json({
+        message: "Total berat telur pada rincian grade tidak boleh melebihi berat panen.",
       });
     }
 
@@ -719,6 +768,9 @@ const createLaporanPanen = async (req, res) => {
           panenId: laporanPanen.id,
           gradeId: rincianGrade.gradeId,
           jumlah: rincianGrade.jumlah,
+          berat: rincianGrade.berat,
+          persentaseJumlah: rincianGrade.persentaseJumlah,
+          persentaseBerat: rincianGrade.persentaseBerat,
         })),
         { transaction: t }
       );
@@ -2264,10 +2316,17 @@ const getHasilPanenTernakWithGrades = async (req, res) => {
         gradeNama: grade.Grade.nama,
         gradeDeskripsi: grade.Grade.deskripsi,
         jumlah: grade.jumlah,
-        persentase:
-          panen.jumlah > 0
-            ? ((grade.jumlah / panen.jumlah) * 100).toFixed(2)
-            : 0,
+        berat: grade.berat,
+        persentaseJumlah:
+          grade.persentaseJumlah ??
+          (grade.jumlah !== null && panen.jumlah > 0
+            ? Number(((grade.jumlah / panen.jumlah) * 100).toFixed(2))
+            : null),
+        persentaseBerat:
+          grade.persentaseBerat ??
+          (grade.berat !== null && panen.berat > 0
+            ? Number(((grade.berat / panen.berat) * 100).toFixed(2))
+            : null),
       }));
 
       // Get harvested animals info
@@ -2299,6 +2358,7 @@ const getHasilPanenTernakWithGrades = async (req, res) => {
         },
         hasilPanen: {
           jumlahPanen: panen.jumlah,
+          beratPanen: panen.berat,
           jumlahHewanDipanen: harvestedAnimals.length,
         },
         rincianGrade: gradeSummary,
