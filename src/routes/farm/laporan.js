@@ -100,6 +100,10 @@ router.get(
   "/grade-summary-by-komoditas",
   laporanController.getGradeSummaryByKomoditas
 );
+router.get(
+  "/hasil-panen-ternak-with-grades",
+  laporanController.getHasilPanenTernakWithGrades
+);
 
 router.get(
   "/riwayat-penyakit-ayam", 

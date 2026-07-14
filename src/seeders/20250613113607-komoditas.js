@@ -7,6 +7,72 @@ module.exports = {
     const jenisBudidayaId2 = "d4e5f6a7-b8c9-4d5e-1f2a-3b4c5d6e7f8a"; // Sawi
     const satuanId1 = "55555555-5555-5555-5555-555555555555"; // Ekor
     const satuanId2 = "77777777-7777-7777-7777-777777777777"; // Batang
+    const ayamBroilerPanenConfig = {
+      tipePanen: "hewan_potong",
+      modePanen: "terminasi",
+      jumlah: {
+        enabled: true,
+        required: true,
+        label: "Jumlah ayam dipanen",
+        satuan: "ekor",
+        integerOnly: true,
+      },
+      berat: {
+        enabled: true,
+        required: true,
+        label: "Berat total panen",
+        satuan: "kg",
+        integerOnly: false,
+      },
+      jumlahHewan: {
+        enabled: true,
+        required: true,
+        label: "Jumlah ayam dipanen",
+        satuan: "ekor",
+        integerOnly: true,
+        defaultValue: 0,
+      },
+      grade: {
+        enabled: true,
+        required: false,
+        allowedFields: ["jumlah", "berat"],
+        validateTotalJumlah: true,
+        validateTotalBerat: true,
+      },
+    };
+    const sayurPanenConfig = {
+      tipePanen: "custom",
+      modePanen: "produksi",
+      jumlah: {
+        enabled: true,
+        required: true,
+        label: "Jumlah panen",
+        satuan: "batang",
+        integerOnly: true,
+      },
+      berat: {
+        enabled: true,
+        required: false,
+        label: "Berat total panen",
+        satuan: "kg",
+        integerOnly: false,
+      },
+      jumlahHewan: {
+        enabled: false,
+        required: false,
+        label: "Jumlah hewan",
+        satuan: "ekor",
+        integerOnly: true,
+        defaultValue: 0,
+      },
+      grade: {
+        enabled: true,
+        required: false,
+        allowedFields: ["jumlah", "berat"],
+        validateTotalJumlah: true,
+        validateTotalBerat: true,
+      },
+    };
 
     await queryInterface.bulkInsert(
       "komoditas",
@@ -20,6 +86,7 @@ module.exports = {
           jumlah: 50,
           tipeKomoditas: "kolektif",
           hapusObjek: false,
+          panenConfig: JSON.stringify(ayamBroilerPanenConfig),
           isDeleted: false,
           createdAt: new Date(),
           updatedAt: new Date(),
@@ -33,6 +100,7 @@ module.exports = {
           jumlah: 200,
           tipeKomoditas: "kolektif",
           hapusObjek: false,
+          panenConfig: JSON.stringify(sayurPanenConfig),
           isDeleted: false,
           createdAt: new Date(),
           updatedAt: new Date(),
@@ -46,6 +114,7 @@ module.exports = {
           jumlah: 150,
           tipeKomoditas: "kolektif",
           hapusObjek: false,
+          panenConfig: JSON.stringify(sayurPanenConfig),
           isDeleted: false,
           createdAt: new Date(),
           updatedAt: new Date(),

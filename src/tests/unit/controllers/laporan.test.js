@@ -221,6 +221,39 @@ describe('Laporan Controller', () => {
       },
       detailPanen: [],
     };
+    const eggPanenConfig = {
+      tipePanen: 'telur',
+      modePanen: 'produksi',
+      jumlah: {
+        enabled: true,
+        required: true,
+        label: 'Jumlah panen',
+        satuan: 'butir',
+        integerOnly: true,
+      },
+      berat: {
+        enabled: true,
+        required: true,
+        label: 'Berat panen',
+        satuan: 'kilogram',
+        integerOnly: false,
+      },
+      jumlahHewan: {
+        enabled: false,
+        required: false,
+        label: 'Jumlah hewan',
+        satuan: 'ekor',
+        integerOnly: true,
+        defaultValue: 0,
+      },
+      grade: {
+        enabled: true,
+        required: false,
+        allowedFields: ['jumlah', 'berat'],
+        validateTotalJumlah: true,
+        validateTotalBerat: true,
+      },
+    };
 
     it('should create laporan panen with mandatory egg count and weight', async () => {
       const mockLaporanInstance = {
@@ -242,6 +275,7 @@ describe('Laporan Controller', () => {
         jumlah: 0,
         tipeKomoditas: 'kolektif',
         hapusObjek: false,
+        panenConfig: eggPanenConfig,
         save: jest.fn(async function() { return this; }),
       };
       const mockUnitBudidayaInstance = {
@@ -303,6 +337,16 @@ describe('Laporan Controller', () => {
           jumlah: 1000,
         },
       };
+      const mockKomoditasInstance = {
+        id: 'komoditasTelur',
+        jumlah: 0,
+        tipeKomoditas: 'kolektif',
+        hapusObjek: false,
+        panenConfig: eggPanenConfig,
+        save: jest.fn(async function() { return this; }),
+      };
+
+      originalSequelize.Komoditas.findOne.mockResolvedValue(mockKomoditasInstance);
 
       const res = await request(app).post(endpoint).send(invalidBody);
 

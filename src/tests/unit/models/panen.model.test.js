@@ -15,9 +15,11 @@ describe('Panen Model', () => {
 
     const Komoditas = sequelize.define('Komoditas', {});
     const Laporan = sequelize.define('Laporan', {});
+    const DetailPanen = sequelize.define('DetailPanen', {});
+    const PanenRincianGrade = sequelize.define('PanenRincianGrade', {});
 
     Panen = definePanen(sequelize, DataTypes);
-    Panen.associate({ Komoditas, Laporan });
+    Panen.associate({ Komoditas, Laporan, DetailPanen, PanenRincianGrade });
 
     await sequelize.sync();
   });
@@ -31,15 +33,18 @@ describe('Panen Model', () => {
   });
 
   it('should create model instance with valid data', async () => {
-    const panen = await Panen.create({ jumlah: 50, isDeleted: false });
+    const panen = await Panen.create({ jumlah: 50, jumlahHewan: 5, isDeleted: false });
     expect(panen.jumlah).toBe(50);
+    expect(panen.jumlahHewan).toBe(5);
     expect(panen.isDeleted).toBe(false);
   });
 
   it('should have associations defined', () => {
     expect(Panen.associations).toBeDefined();
-    expect(Panen.associations.Komodita).toBeDefined();
+    expect(Panen.associations.komoditas).toBeDefined();
     expect(Panen.associations.Laporan).toBeDefined();
+    expect(Panen.associations.DetailPanens).toBeDefined();
+    expect(Panen.associations.PanenRincianGrades).toBeDefined();
   });
 
   it('should allow soft deletion', async () => {

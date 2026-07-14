@@ -42,6 +42,10 @@ const {
   mergeMetrics,
   saveDailyReportMetrics,
 } = require("../../services/dailyReportMetricService");
+const {
+  attachPanenConfig,
+  normalizePanenConfig,
+} = require("../../utils/panenConfigUtils");
 
 const hasNumericValue = (value) =>
   value !== undefined && value !== null && value !== "";
@@ -56,6 +60,51 @@ const parseOptionalNumber = (value) => {
 
 const percentageOf = (value, total) =>
   value === null || total <= 0 ? null : Number(((value / total) * 100).toFixed(2));
+
+const buildPositiveNumberMessage = (fieldConfig, fallbackLabel, fallbackSatuan) => {
+  const label = fieldConfig.label || fallbackLabel;
+  const satuan = fieldConfig.satuan || fallbackSatuan;
+  const integerText = fieldConfig.integerOnly ? " bulat" : "";
+  const satuanText = satuan ? ` ${satuan}` : "";
+
+  return `${label} wajib diisi sebagai angka${integerText}${satuanText} lebih dari 0.`;
+};
+
+const validatePositiveField = (value, fieldConfig, fallbackLabel, fallbackSatuan) => {
+  const numberValue = parseOptionalNumber(value);
+
+  if (!fieldConfig.enabled) {
+    return { value: null, provided: numberValue !== null };
+  }
+
+  if (numberValue === null) {
+    if (fieldConfig.required) {
+      return {
+        message: buildPositiveNumberMessage(
+          fieldConfig,
+          fallbackLabel,
+          fallbackSatuan
+        ),
+      };
+    }
+
+    return { value: null, provided: false };
+  }
+
+  if (!Number.isFinite(numberValue) || numberValue <= 0) {
+    return {
+      message: buildPositiveNumberMessage(fieldConfig, fallbackLabel, fallbackSatuan),
+    };
+  }
+
+  if (fieldConfig.integerOnly && !Number.isInteger(numberValue)) {
+    return {
+      message: buildPositiveNumberMessage(fieldConfig, fallbackLabel, fallbackSatuan),
+    };
+  }
+
+  return { value: numberValue, provided: true };
+};
 
 const createLaporanHarianKebun = async (req, res) => {
   const t = await db.transaction();
@@ -621,65 +670,187 @@ const createLaporanPanen = async (req, res) => {
       });
     }
 
-    const jumlahPanen = Number(panen.jumlah);
-    const beratPanen = Number(panen.berat);
-    const jumlahHewan =
-      panen?.jumlahHewan === undefined || panen?.jumlahHewan === null || panen?.jumlahHewan === ""
-        ? 0
-        : Number(panen.jumlahHewan);
+    const komoditas = await Komoditas.findOne({
+      where: { id: panen.komoditasId, isDeleted: false },
+      include: [
+        {
+          model: Satuan,
+          required: false,
+        },
+      ],
+      transaction: t,
+    });
 
-    if (!Number.isInteger(jumlahPanen) || jumlahPanen <= 0) {
+    if (!komoditas) {
       await t.rollback();
-      return res.status(400).json({
-        message: "Jumlah panen wajib diisi sebagai angka bulat butir lebih dari 0.",
+      return res.status(404).json({
+        message: "Komoditas tidak ditemukan.",
       });
     }
 
-    if (!Number.isFinite(beratPanen) || beratPanen <= 0) {
+    const panenConfig = normalizePanenConfig(komoditas.panenConfig, komoditas);
+
+    const jumlahValidation = validatePositiveField(
+      panen.jumlah,
+      panenConfig.jumlah,
+      "Jumlah panen",
+      "satuan"
+    );
+
+    if (jumlahValidation.message) {
       await t.rollback();
-      return res.status(400).json({
-        message: "Berat panen wajib diisi sebagai angka kilogram lebih dari 0.",
-      });
+      return res.status(400).json({ message: jumlahValidation.message });
     }
 
-    if (!Number.isFinite(jumlahHewan) || jumlahHewan < 0) {
+    const beratValidation = validatePositiveField(
+      panen.berat,
+      panenConfig.berat,
+      "Berat panen",
+      "kg"
+    );
+
+    if (beratValidation.message) {
       await t.rollback();
-      return res.status(400).json({
-        message: "Jumlah hewan yang dipanen harus berupa angka minimal 0.",
-      });
+      return res.status(400).json({ message: beratValidation.message });
+    }
+
+    const jumlahPanen = jumlahValidation.value;
+    const beratPanen = beratValidation.value;
+    const rawJumlahHewan = parseOptionalNumber(panen.jumlahHewan);
+    const jumlahHewanConfig = {
+      ...panenConfig.jumlahHewan,
+      integerOnly: true,
+    };
+    let jumlahHewan = Number(jumlahHewanConfig.defaultValue ?? 0) || 0;
+
+    if (!jumlahHewanConfig.enabled) {
+      if (rawJumlahHewan !== null && rawJumlahHewan > 0) {
+        await t.rollback();
+        return res.status(400).json({
+          message: "Jumlah hewan tidak digunakan untuk komoditas ini.",
+        });
+      }
+    } else if (rawJumlahHewan === null) {
+      if (jumlahHewanConfig.required) {
+        await t.rollback();
+        return res.status(400).json({
+          message: buildPositiveNumberMessage(
+            jumlahHewanConfig,
+            "Jumlah hewan yang dipanen",
+            "ekor"
+          ),
+        });
+      }
+    } else {
+      if (
+        !Number.isFinite(rawJumlahHewan) ||
+        rawJumlahHewan < 0 ||
+        !Number.isInteger(rawJumlahHewan)
+      ) {
+        await t.rollback();
+        return res.status(400).json({
+          message: "Jumlah hewan yang dipanen harus berupa angka bulat minimal 0.",
+        });
+      }
+
+      if (jumlahHewanConfig.required && rawJumlahHewan <= 0) {
+        await t.rollback();
+        return res.status(400).json({
+          message: buildPositiveNumberMessage(
+            jumlahHewanConfig,
+            "Jumlah hewan yang dipanen",
+            "ekor"
+          ),
+        });
+      }
+
+      jumlahHewan = rawJumlahHewan;
     }
 
     const rincianGrade = Array.isArray(panen.rincianGrade) ? panen.rincianGrade : [];
     const rincianGradeData = [];
-    for (const rincian of rincianGrade) {
+    const gradeConfig = panenConfig.grade;
+    const allowedGradeFields = gradeConfig.allowedFields || ["jumlah", "berat"];
+    const allowGradeJumlah = allowedGradeFields.includes("jumlah");
+    const allowGradeBerat = allowedGradeFields.includes("berat");
+    const allowedGradeText = allowedGradeFields.join(" atau ");
+
+    if (!gradeConfig.enabled && rincianGrade.length > 0) {
+      await t.rollback();
+      return res.status(400).json({
+        message: "Rincian grade tidak digunakan untuk komoditas ini.",
+      });
+    }
+
+    if (gradeConfig.enabled && gradeConfig.required && rincianGrade.length === 0) {
+      await t.rollback();
+      return res.status(400).json({
+        message: "Rincian grade wajib diisi untuk komoditas ini.",
+      });
+    }
+
+    for (const rincian of gradeConfig.enabled ? rincianGrade : []) {
+      const hasJumlahGrade = hasNumericValue(rincian.jumlah);
+      const hasBeratGrade = hasNumericValue(rincian.berat);
       const jumlahGrade = parseOptionalNumber(rincian.jumlah);
       const beratGrade = parseOptionalNumber(rincian.berat);
 
-      if (!rincian.gradeId || (jumlahGrade === null && beratGrade === null)) {
+      if (!rincian.gradeId) {
         await t.rollback();
         return res.status(400).json({
-          message: "Rincian grade wajib memiliki gradeId dan minimal salah satu dari jumlah atau berat.",
+          message: `Rincian grade wajib memiliki gradeId dan minimal salah satu dari ${allowedGradeText}.`,
         });
       }
 
-      if (jumlahGrade !== null && (!Number.isInteger(jumlahGrade) || jumlahGrade < 0)) {
+      if ((!allowGradeJumlah && hasJumlahGrade) || (!allowGradeBerat && hasBeratGrade)) {
         await t.rollback();
         return res.status(400).json({
-          message: "Jumlah grade harus berupa angka bulat butir minimal 0.",
+          message: `Rincian grade hanya boleh mengirim field: ${allowedGradeFields.join(", ")}.`,
         });
       }
 
-      if (beratGrade !== null && (!Number.isFinite(beratGrade) || beratGrade < 0)) {
+      if (
+        (!allowGradeJumlah || !hasJumlahGrade) &&
+        (!allowGradeBerat || !hasBeratGrade)
+      ) {
         await t.rollback();
         return res.status(400).json({
-          message: "Berat grade harus berupa angka kilogram minimal 0.",
+          message: `Rincian grade wajib memiliki gradeId dan minimal salah satu dari ${allowedGradeText}.`,
+        });
+      }
+
+      if (
+        allowGradeJumlah &&
+        hasJumlahGrade &&
+        (!Number.isFinite(jumlahGrade) ||
+          jumlahGrade <= 0 ||
+          (panenConfig.jumlah.integerOnly && !Number.isInteger(jumlahGrade)))
+      ) {
+        await t.rollback();
+        return res.status(400).json({
+          message: buildPositiveNumberMessage(
+            panenConfig.jumlah,
+            "Jumlah grade",
+            "satuan"
+          ),
+        });
+      }
+
+      if (
+        allowGradeBerat &&
+        hasBeratGrade &&
+        (!Number.isFinite(beratGrade) || beratGrade <= 0)
+      ) {
+        await t.rollback();
+        return res.status(400).json({
+          message: "Berat grade wajib diisi sebagai angka kg lebih dari 0.",
         });
       }
 
       rincianGradeData.push({
         gradeId: rincian.gradeId,
-        jumlah: jumlahGrade,
-        berat: beratGrade,
+        jumlah: allowGradeJumlah && hasJumlahGrade ? jumlahGrade : null,
+        berat: allowGradeBerat && hasBeratGrade ? beratGrade : null,
         persentaseJumlah: percentageOf(jumlahGrade, jumlahPanen),
         persentaseBerat: percentageOf(beratGrade, beratPanen),
       });
@@ -688,29 +859,27 @@ const createLaporanPanen = async (req, res) => {
     const totalGradeJumlah = rincianGradeData.reduce((sum, item) => sum + (item.jumlah ?? 0), 0);
     const totalGradeBerat = rincianGradeData.reduce((sum, item) => sum + (item.berat ?? 0), 0);
 
-    if (totalGradeJumlah > jumlahPanen) {
+    if (
+      gradeConfig.validateTotalJumlah &&
+      allowGradeJumlah &&
+      jumlahPanen > 0 &&
+      totalGradeJumlah > jumlahPanen
+    ) {
       await t.rollback();
       return res.status(400).json({
-        message: "Total jumlah telur pada rincian grade tidak boleh melebihi jumlah panen.",
+        message: "Total jumlah pada rincian grade tidak boleh melebihi jumlah panen.",
       });
     }
 
-    if (Number(totalGradeBerat.toFixed(4)) > beratPanen) {
+    if (
+      gradeConfig.validateTotalBerat &&
+      allowGradeBerat &&
+      beratPanen > 0 &&
+      Number(totalGradeBerat.toFixed(4)) > beratPanen
+    ) {
       await t.rollback();
       return res.status(400).json({
-        message: "Total berat telur pada rincian grade tidak boleh melebihi berat panen.",
-      });
-    }
-
-    const komoditas = await Komoditas.findOne({
-      where: { id: panen.komoditasId },
-      transaction: t,
-    });
-
-    if (!komoditas) {
-      await t.rollback();
-      return res.status(404).json({
-        message: "Komoditas tidak ditemukan.",
+        message: "Total berat pada rincian grade tidak boleh melebihi berat panen.",
       });
     }
 
@@ -757,6 +926,7 @@ const createLaporanPanen = async (req, res) => {
         komoditasId: panen.komoditasId,
         jumlah: jumlahPanen,
         berat: beratPanen,
+        jumlahHewan,
       },
       { transaction: t }
     );
@@ -776,7 +946,7 @@ const createLaporanPanen = async (req, res) => {
       );
     }
 
-    komoditas.jumlah = Number(komoditas.jumlah ?? 0) + jumlahPanen;
+    komoditas.jumlah = Number(komoditas.jumlah ?? 0) + Number(jumlahPanen ?? 0);
     await komoditas.save({ transaction: t });
 
     if (produk) {
@@ -1265,7 +1435,7 @@ const getHasilPanenWithGrades = async (req, res) => {
             {
               model: Komoditas,
               as: "komoditas",
-              attributes: ["id", "nama"],
+              attributes: ["id", "nama", "panenConfig"],
               include: [
                 {
                   model: Satuan,
@@ -1478,7 +1648,7 @@ const getGradeSummaryByKomoditas = async (req, res) => {
             {
               model: Komoditas,
               as: "komoditas",
-              attributes: ["id", "nama"],
+              attributes: ["id", "nama", "panenConfig"],
               include: [
                 {
                   model: Satuan,
@@ -1939,7 +2109,7 @@ const getLaporanPanenById = async (req, res) => {
             {
               model: Komoditas,
               as: "komoditas",
-              attributes: ["nama"],
+              attributes: ["id", "nama", "panenConfig"],
               include: [
                 {
                   model: Satuan,
@@ -1991,9 +2161,18 @@ const getLaporanPanenById = async (req, res) => {
       });
     }
 
+    const responseData = laporan.toJSON();
+
+    if (responseData.Panen?.komoditas) {
+      responseData.Panen.komoditas = attachPanenConfig(
+        responseData.Panen.komoditas
+      );
+    }
+
     return res.status(200).json({
+      status: true,
       message: "Successfully retrieved laporan data",
-      data: laporan,
+      data: responseData,
     });
   } catch (error) {
     res.status(500).json({
@@ -2253,7 +2432,7 @@ const getHasilPanenTernakWithGrades = async (req, res) => {
             {
               model: Komoditas,
               as: "komoditas",
-              attributes: ["id", "nama"],
+              attributes: ["id", "nama", "panenConfig"],
               include: [
                 {
                   model: Satuan,
@@ -2309,6 +2488,7 @@ const getHasilPanenTernakWithGrades = async (req, res) => {
       const panen = laporan.Panen;
       const grades = panen.PanenRincianGrades || [];
       const detailPanen = panen.DetailPanens || [];
+      const komoditas = attachPanenConfig(panen.komoditas);
 
       // Calculate grade summary
       const gradeSummary = grades.map((grade) => ({
@@ -2352,14 +2532,15 @@ const getHasilPanenTernakWithGrades = async (req, res) => {
           jenisBudidaya: laporan.UnitBudidaya.JenisBudidaya.nama,
         },
         komoditas: {
-          id: panen.komoditas.id,
-          nama: panen.komoditas.nama,
-          satuan: panen.komoditas.Satuan,
+          id: komoditas.id,
+          nama: komoditas.nama,
+          satuan: komoditas.Satuan,
+          panenConfig: komoditas.panenConfig,
         },
         hasilPanen: {
           jumlahPanen: panen.jumlah,
           beratPanen: panen.berat,
-          jumlahHewanDipanen: harvestedAnimals.length,
+          jumlahHewanDipanen: panen.jumlahHewan ?? harvestedAnimals.length,
         },
         rincianGrade: gradeSummary,
         hewanDipanen: harvestedAnimals,

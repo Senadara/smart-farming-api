@@ -28,6 +28,10 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.ENUM("individu", "kolektif"),
         allowNull: false,
       },
+      panenConfig: {
+        type: DataTypes.JSON,
+        allowNull: true,
+      },
       isDeleted: {
         type: DataTypes.BOOLEAN,
         defaultValue: false,
@@ -53,9 +57,15 @@ module.exports = (sequelize, DataTypes) => {
     Komoditas.hasMany(models.Panen, {
       foreignKey: "komoditasId",
     });
-    Komoditas.belongsTo(models.Produk);
-    Komoditas.belongsTo(models.Satuan);
-    Komoditas.belongsTo(models.JenisBudidaya);
+    Komoditas.belongsTo(models.Produk, {
+      foreignKey: "produkId",
+    });
+    Komoditas.belongsTo(models.Satuan, {
+      foreignKey: "satuanId",
+    });
+    Komoditas.belongsTo(models.JenisBudidaya, {
+      foreignKey: "jenisBudidayaId",
+    });
   };
 
   return Komoditas;
