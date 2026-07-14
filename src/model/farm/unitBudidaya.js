@@ -30,6 +30,11 @@ module.exports = (sequelize, DataTypes) => {
       jumlah: {
         type: DataTypes.INTEGER,
       },
+      umurMinggu: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        defaultValue: 0,
+      },
       status: {
         type: DataTypes.BOOLEAN,
         defaultValue: true,

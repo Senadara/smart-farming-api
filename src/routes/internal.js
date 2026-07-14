@@ -1,6 +1,7 @@
 const express = require("express");
 const {
   sendNotificationToSingleUserById,
+  sendNotificationToTarget,
 } = require("../../services/notificationService");
 
 const router = express.Router();
@@ -24,6 +25,60 @@ function validateInternalToken(req, res, next) {
   next();
 }
 
+function normalizeNotificationTarget(body = {}) {
+  if (body.target && typeof body.target === "object") {
+    return body.target;
+  }
+
+  if (body.userId) {
+    return { userId: body.userId };
+  }
+
+  if (body.role) {
+    return { role: body.role };
+  }
+
+  if (body.all === true) {
+    return { all: true };
+  }
+
+  return null;
+}
+
+function notificationResponseStatus(result) {
+  return result?.success ? 200 : 202;
+}
+
+router.post("/notifications/mobile", validateInternalToken, async (req, res) => {
+  try {
+    const { title, body, data = {} } = req.body || {};
+    const target = normalizeNotificationTarget(req.body);
+
+    if (!target || !title || !body) {
+      return res.status(422).json({
+        success: false,
+        message: "target, title, and body are required",
+      });
+    }
+
+    const result = await sendNotificationToTarget(target, title, body, {
+      ...data,
+      source: data.source || "laravel",
+    });
+
+    return res.status(notificationResponseStatus(result)).json({
+      success: Boolean(result.success),
+      data: result,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Failed to send mobile notification",
+      error: error.message,
+    });
+  }
+});
+
 router.post("/notifications/spk-alert", validateInternalToken, async (req, res) => {
   try {
     const { userId, title, body, data = {} } = req.body || {};
@@ -46,7 +101,7 @@ router.post("/notifications/spk-alert", validateInternalToken, async (req, res) 
       }
     );
 
-    return res.status(result.success ? 200 : 202).json({
+    return res.status(notificationResponseStatus(result)).json({
       success: Boolean(result.success),
       data: result,
     });
