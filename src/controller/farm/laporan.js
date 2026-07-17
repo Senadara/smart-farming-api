@@ -14,6 +14,7 @@ const JenisBudidaya = sequelize.JenisBudidaya;
 
 const HarianKebun = sequelize.HarianKebun;
 const HarianTernak = sequelize.HarianTernak;
+const DailyReportMetric = sequelize.DailyReportMetric;
 
 const Sakit = sequelize.Sakit;
 const Kematian = sequelize.Kematian;
@@ -34,6 +35,76 @@ const Satuan = sequelize.Satuan;
 const Grade = sequelize.Grade;
 
 const Produk = sequelize.Produk;
+
+const DaftarGejala = sequelize.DaftarGejala;
+const Gejala = sequelize.Gejala;
+const {
+  mergeMetrics,
+  saveDailyReportMetrics,
+} = require("../../services/dailyReportMetricService");
+const {
+  attachPanenConfig,
+  normalizePanenConfig,
+} = require("../../utils/panenConfigUtils");
+
+const hasNumericValue = (value) =>
+  value !== undefined && value !== null && value !== "";
+
+const parseOptionalNumber = (value) => {
+  if (!hasNumericValue(value)) {
+    return null;
+  }
+
+  return Number(value);
+};
+
+const percentageOf = (value, total) =>
+  value === null || total <= 0 ? null : Number(((value / total) * 100).toFixed(2));
+
+const buildPositiveNumberMessage = (fieldConfig, fallbackLabel, fallbackSatuan) => {
+  const label = fieldConfig.label || fallbackLabel;
+  const satuan = fieldConfig.satuan || fallbackSatuan;
+  const integerText = fieldConfig.integerOnly ? " bulat" : "";
+  const satuanText = satuan ? ` ${satuan}` : "";
+
+  return `${label} wajib diisi sebagai angka${integerText}${satuanText} lebih dari 0.`;
+};
+
+const validatePositiveField = (value, fieldConfig, fallbackLabel, fallbackSatuan) => {
+  const numberValue = parseOptionalNumber(value);
+
+  if (!fieldConfig.enabled) {
+    return { value: null, provided: numberValue !== null };
+  }
+
+  if (numberValue === null) {
+    if (fieldConfig.required) {
+      return {
+        message: buildPositiveNumberMessage(
+          fieldConfig,
+          fallbackLabel,
+          fallbackSatuan
+        ),
+      };
+    }
+
+    return { value: null, provided: false };
+  }
+
+  if (!Number.isFinite(numberValue) || numberValue <= 0) {
+    return {
+      message: buildPositiveNumberMessage(fieldConfig, fallbackLabel, fallbackSatuan),
+    };
+  }
+
+  if (fieldConfig.integerOnly && !Number.isInteger(numberValue)) {
+    return {
+      message: buildPositiveNumberMessage(fieldConfig, fallbackLabel, fallbackSatuan),
+    };
+  }
+
+  return { value: numberValue, provided: true };
+};
 
 const createLaporanHarianKebun = async (req, res) => {
   const t = await db.transaction();
@@ -69,7 +140,7 @@ const createLaporanHarianKebun = async (req, res) => {
           : harianKebun.kondisiDaun,
       statusTumbuh:
         harianKebun.statusTumbuh === undefined ||
-        harianKebun.statusTumbuh === ""
+          harianKebun.statusTumbuh === ""
           ? null
           : harianKebun.statusTumbuh,
     };
@@ -144,15 +215,29 @@ const createLaporanHarianKebun = async (req, res) => {
       transaction: t,
     });
 
+    const metrics = mergeMetrics(
+      {
+        penyiraman: { value: finalHarianData.penyiraman ? 1 : 0, unit: "boolean" },
+        pruning: { value: finalHarianData.pruning ? 1 : 0, unit: "boolean" },
+        repotting: { value: finalHarianData.repotting ? 1 : 0, unit: "boolean" },
+        tinggi_tanaman: { value: Number(finalHarianData.tinggiTanaman || 0), unit: "cm" },
+      },
+      req.body.metrics,
+      harianKebun?.metrics
+    );
+
+    const dynamicMetrics = await saveDailyReportMetrics(data.id, metrics, t);
+
     await t.commit();
 
-    res.locals.createdData = { data, harian };
+    res.locals.createdData = { data, harian, metrics: dynamicMetrics };
 
     return res.status(201).json({
       message: "Successfully created new laporan data",
       data: {
         data,
         harian,
+        metrics: dynamicMetrics,
       },
     });
   } catch (error) {
@@ -205,6 +290,25 @@ const createLaporanHarianTernak = async (req, res) => {
 
   try {
     const { harianTernak } = req.body;
+    const rawPakan =
+      harianTernak?.pakanKg ??
+      harianTernak?.jumlahPakan ??
+      harianTernak?.pakan;
+    const pakanKg = Number(rawPakan);
+
+    if (!harianTernak || rawPakan === undefined || rawPakan === null || rawPakan === "") {
+      await t.rollback();
+      return res.status(400).json({
+        message: "Jumlah pakan wajib diisi dalam satuan kilogram.",
+      });
+    }
+
+    if (typeof rawPakan === "boolean" || !Number.isFinite(pakanKg) || pakanKg < 0) {
+      await t.rollback();
+      return res.status(400).json({
+        message: "Jumlah pakan harus berupa angka kilogram, contoh: 12.5.",
+      });
+    }
 
     const data = await Laporan.create(
       {
@@ -224,6 +328,7 @@ const createLaporanHarianTernak = async (req, res) => {
     });
 
     if (!laporan) {
+      await t.rollback();
       return res.status(404).json({
         message: "Laporan not found",
       });
@@ -232,21 +337,33 @@ const createLaporanHarianTernak = async (req, res) => {
     const harian = await HarianTernak.create(
       {
         LaporanId: laporan.id,
-        pakan: harianTernak.pakan,
-        cekKandang: harianTernak.cekKandang,
+        pakan: pakanKg,
+        cekKandang: Boolean(harianTernak.cekKandang),
       },
       { transaction: t }
     );
 
+    const metrics = mergeMetrics(
+      {
+        pakan: { value: pakanKg, unit: "kg" },
+        cek_kandang: { value: Boolean(harianTernak.cekKandang) ? 1 : 0, unit: "boolean" },
+      },
+      req.body.metrics,
+      harianTernak.metrics
+    );
+
+    const dynamicMetrics = await saveDailyReportMetrics(laporan.id, metrics, t);
+
     await t.commit();
 
-    res.locals.createdData = { data, harian };
+    res.locals.createdData = { data, harian, metrics: dynamicMetrics };
 
     return res.status(201).json({
       message: "Successfully created new laporan data",
       data: {
         data,
         harian,
+        metrics: dynamicMetrics,
       },
     });
   } catch (error) {
@@ -258,6 +375,7 @@ const createLaporanHarianTernak = async (req, res) => {
   }
 };
 
+// create laporan sakit
 const createLaporanSakit = async (req, res) => {
   const t = await db.transaction();
 
@@ -277,20 +395,42 @@ const createLaporanSakit = async (req, res) => {
     const laporanSakit = await Sakit.create(
       {
         LaporanId: data.id,
-        penyakit: sakit.penyakit,
+        diagnosisPenyakit: sakit.diagnosisPenyakit,
+        status: sakit.status,
+      },
+      { transaction: t }
+    );
+
+    const gejala = await Gejala.create(
+      {
+        gejala1: sakit.gejala1,
+        gejala2: sakit.gejala2,
+        gejala3: sakit.gejala3,
+        gejala4: sakit.gejala4,
+      },
+      { transaction: t }
+    );
+
+    const daftarGejala = await DaftarGejala.create(
+      {
+        sakitId: laporanSakit.id,
+        gejalaId: gejala.id,
+        catatan: sakit.catatan,
       },
       { transaction: t }
     );
 
     await t.commit();
 
-    res.locals.createdData = { data, laporanSakit };
+    res.locals.createdData = { data, laporanSakit, gejala, daftarGejala };
 
     return res.status(201).json({
       message: "Successfully created new laporan data",
       data: {
         data,
         laporanSakit,
+        gejala,
+        daftarGejala,
       },
     });
   } catch (error) {
@@ -307,17 +447,46 @@ const createLaporanKematian = async (req, res) => {
 
   try {
     const { kematian } = req.body;
+    const jumlahKematian = Number.parseInt(req.body.jumlah ?? 1, 10);
 
-    const { jumlah } = req.body;
+    if (!kematian || !kematian.tanggal || !kematian.penyebab) {
+      await t.rollback();
+      return res.status(400).json({
+        message: "Tanggal dan penyebab kematian wajib diisi.",
+      });
+    }
+
+    if (!Number.isInteger(jumlahKematian) || jumlahKematian <= 0) {
+      await t.rollback();
+      return res.status(400).json({
+        message: "Jumlah kematian harus berupa bilangan bulat lebih dari 0.",
+      });
+    }
 
     const unitBudidaya = await UnitBudidaya.findOne({
       where: {
         id: req.body.unitBudidayaId,
         isDeleted: false,
       },
+      transaction: t,
     });
 
-    if (unitBudidaya.tipe == "individu") {
+    if (!unitBudidaya) {
+      await t.rollback();
+      return res.status(404).json({
+        message: "Unit budidaya tidak ditemukan.",
+      });
+    }
+
+    const currentPopulation = Number(unitBudidaya.jumlah ?? 0);
+    if (jumlahKematian > currentPopulation) {
+      await t.rollback();
+      return res.status(400).json({
+        message: `Jumlah kematian (${jumlahKematian}) melebihi populasi saat ini (${currentPopulation}).`,
+      });
+    }
+
+    if (unitBudidaya.tipe == "individu" && req.body.objekBudidayaId) {
       await ObjekBudidaya.update(
         {
           isDeleted: true,
@@ -331,34 +500,23 @@ const createLaporanKematian = async (req, res) => {
       );
     }
 
-    if (jumlah && !isNaN(jumlah) && jumlah > 0) {
-      await unitBudidaya.update(
-        {
-          jumlah: unitBudidaya.jumlah - jumlah,
-        },
-        {
-          transaction: t,
-        }
-      );
-    } else {
-      await unitBudidaya.update(
-        {
-          jumlah: unitBudidaya.jumlah - 1,
-        },
-        {
-          transaction: t,
-        }
-      );
-    }
+    await unitBudidaya.update(
+      {
+        jumlah: currentPopulation - jumlahKematian,
+      },
+      {
+        transaction: t,
+      }
+    );
 
     let data;
     let laporanKematian;
 
-    let i = 0;
-    do {
+    for (let i = 0; i < jumlahKematian; i++) {
       data = await Laporan.create(
         {
           ...req.body,
+          jumlah: jumlahKematian,
           UnitBudidayaId: req.body.unitBudidayaId,
           ObjekBudidayaId: req.body.objekBudidayaId,
           UserId: req.user.id,
@@ -374,8 +532,7 @@ const createLaporanKematian = async (req, res) => {
         },
         { transaction: t }
       );
-      i++;
-    } while (i < jumlah);
+    }
 
     await t.commit();
 
@@ -402,6 +559,8 @@ const createLaporanKematian = async (req, res) => {
       data: {
         data,
         laporanKematian,
+        jumlahKematian,
+        updatedUnit,
       },
     });
   } catch (error) {
@@ -502,14 +661,254 @@ const createLaporanPanen = async (req, res) => {
 
   try {
     const { panen, detailPanen } = req.body;
+    const detailPanenIds = Array.isArray(detailPanen) ? detailPanen : [];
+
+    if (!panen || !panen.komoditasId) {
+      await t.rollback();
+      return res.status(400).json({
+        message: "Data panen dan komoditas wajib diisi.",
+      });
+    }
 
     const komoditas = await Komoditas.findOne({
-      where: { id: panen.komoditasId },
+      where: { id: panen.komoditasId, isDeleted: false },
+      include: [
+        {
+          model: Satuan,
+          required: false,
+        },
+      ],
+      transaction: t,
     });
 
-    const produk = await Produk.findOne({
-      where: { id: komoditas.produkId, isDeleted: false },
+    if (!komoditas) {
+      await t.rollback();
+      return res.status(404).json({
+        message: "Komoditas tidak ditemukan.",
+      });
+    }
+
+    const panenConfig = normalizePanenConfig(komoditas.panenConfig, komoditas);
+
+    const jumlahValidation = validatePositiveField(
+      panen.jumlah,
+      panenConfig.jumlah,
+      "Jumlah panen",
+      "satuan"
+    );
+
+    if (jumlahValidation.message) {
+      await t.rollback();
+      return res.status(400).json({ message: jumlahValidation.message });
+    }
+
+    const beratValidation = validatePositiveField(
+      panen.berat,
+      panenConfig.berat,
+      "Berat panen",
+      "kg"
+    );
+
+    if (beratValidation.message) {
+      await t.rollback();
+      return res.status(400).json({ message: beratValidation.message });
+    }
+
+    const jumlahPanen = jumlahValidation.value;
+    const beratPanen = beratValidation.value;
+    const rawJumlahHewan = parseOptionalNumber(panen.jumlahHewan);
+    const jumlahHewanConfig = {
+      ...panenConfig.jumlahHewan,
+      integerOnly: true,
+    };
+    let jumlahHewan = Number(jumlahHewanConfig.defaultValue ?? 0) || 0;
+
+    if (!jumlahHewanConfig.enabled) {
+      if (rawJumlahHewan !== null && rawJumlahHewan > 0) {
+        await t.rollback();
+        return res.status(400).json({
+          message: "Jumlah hewan tidak digunakan untuk komoditas ini.",
+        });
+      }
+    } else if (rawJumlahHewan === null) {
+      if (jumlahHewanConfig.required) {
+        await t.rollback();
+        return res.status(400).json({
+          message: buildPositiveNumberMessage(
+            jumlahHewanConfig,
+            "Jumlah hewan yang dipanen",
+            "ekor"
+          ),
+        });
+      }
+    } else {
+      if (
+        !Number.isFinite(rawJumlahHewan) ||
+        rawJumlahHewan < 0 ||
+        !Number.isInteger(rawJumlahHewan)
+      ) {
+        await t.rollback();
+        return res.status(400).json({
+          message: "Jumlah hewan yang dipanen harus berupa angka bulat minimal 0.",
+        });
+      }
+
+      if (jumlahHewanConfig.required && rawJumlahHewan <= 0) {
+        await t.rollback();
+        return res.status(400).json({
+          message: buildPositiveNumberMessage(
+            jumlahHewanConfig,
+            "Jumlah hewan yang dipanen",
+            "ekor"
+          ),
+        });
+      }
+
+      jumlahHewan = rawJumlahHewan;
+    }
+
+    const rincianGrade = Array.isArray(panen.rincianGrade) ? panen.rincianGrade : [];
+    const rincianGradeData = [];
+    const gradeConfig = panenConfig.grade;
+    const allowedGradeFields = gradeConfig.allowedFields || ["jumlah", "berat"];
+    const allowGradeJumlah = allowedGradeFields.includes("jumlah");
+    const allowGradeBerat = allowedGradeFields.includes("berat");
+    const allowedGradeText = allowedGradeFields.join(" atau ");
+
+    if (!gradeConfig.enabled && rincianGrade.length > 0) {
+      await t.rollback();
+      return res.status(400).json({
+        message: "Rincian grade tidak digunakan untuk komoditas ini.",
+      });
+    }
+
+    if (gradeConfig.enabled && gradeConfig.required && rincianGrade.length === 0) {
+      await t.rollback();
+      return res.status(400).json({
+        message: "Rincian grade wajib diisi untuk komoditas ini.",
+      });
+    }
+
+    for (const rincian of gradeConfig.enabled ? rincianGrade : []) {
+      const hasJumlahGrade = hasNumericValue(rincian.jumlah);
+      const hasBeratGrade = hasNumericValue(rincian.berat);
+      const jumlahGrade = parseOptionalNumber(rincian.jumlah);
+      const beratGrade = parseOptionalNumber(rincian.berat);
+
+      if (!rincian.gradeId) {
+        await t.rollback();
+        return res.status(400).json({
+          message: `Rincian grade wajib memiliki gradeId dan minimal salah satu dari ${allowedGradeText}.`,
+        });
+      }
+
+      if ((!allowGradeJumlah && hasJumlahGrade) || (!allowGradeBerat && hasBeratGrade)) {
+        await t.rollback();
+        return res.status(400).json({
+          message: `Rincian grade hanya boleh mengirim field: ${allowedGradeFields.join(", ")}.`,
+        });
+      }
+
+      if (
+        (!allowGradeJumlah || !hasJumlahGrade) &&
+        (!allowGradeBerat || !hasBeratGrade)
+      ) {
+        await t.rollback();
+        return res.status(400).json({
+          message: `Rincian grade wajib memiliki gradeId dan minimal salah satu dari ${allowedGradeText}.`,
+        });
+      }
+
+      if (
+        allowGradeJumlah &&
+        hasJumlahGrade &&
+        (!Number.isFinite(jumlahGrade) ||
+          jumlahGrade <= 0 ||
+          (panenConfig.jumlah.integerOnly && !Number.isInteger(jumlahGrade)))
+      ) {
+        await t.rollback();
+        return res.status(400).json({
+          message: buildPositiveNumberMessage(
+            panenConfig.jumlah,
+            "Jumlah grade",
+            "satuan"
+          ),
+        });
+      }
+
+      if (
+        allowGradeBerat &&
+        hasBeratGrade &&
+        (!Number.isFinite(beratGrade) || beratGrade <= 0)
+      ) {
+        await t.rollback();
+        return res.status(400).json({
+          message: "Berat grade wajib diisi sebagai angka kg lebih dari 0.",
+        });
+      }
+
+      rincianGradeData.push({
+        gradeId: rincian.gradeId,
+        jumlah: allowGradeJumlah && hasJumlahGrade ? jumlahGrade : null,
+        berat: allowGradeBerat && hasBeratGrade ? beratGrade : null,
+        persentaseJumlah: percentageOf(jumlahGrade, jumlahPanen),
+        persentaseBerat: percentageOf(beratGrade, beratPanen),
+      });
+    }
+
+    const totalGradeJumlah = rincianGradeData.reduce((sum, item) => sum + (item.jumlah ?? 0), 0);
+    const totalGradeBerat = rincianGradeData.reduce((sum, item) => sum + (item.berat ?? 0), 0);
+
+    if (
+      gradeConfig.validateTotalJumlah &&
+      allowGradeJumlah &&
+      jumlahPanen > 0 &&
+      totalGradeJumlah > jumlahPanen
+    ) {
+      await t.rollback();
+      return res.status(400).json({
+        message: "Total jumlah pada rincian grade tidak boleh melebihi jumlah panen.",
+      });
+    }
+
+    if (
+      gradeConfig.validateTotalBerat &&
+      allowGradeBerat &&
+      beratPanen > 0 &&
+      Number(totalGradeBerat.toFixed(4)) > beratPanen
+    ) {
+      await t.rollback();
+      return res.status(400).json({
+        message: "Total berat pada rincian grade tidak boleh melebihi berat panen.",
+      });
+    }
+
+    const unitBudidaya = await UnitBudidaya.findOne({
+      where: { id: req.body.unitBudidayaId, isDeleted: false },
+      transaction: t,
     });
+
+    if (!unitBudidaya) {
+      await t.rollback();
+      return res.status(404).json({
+        message: "Unit budidaya tidak ditemukan.",
+      });
+    }
+
+    const currentPopulation = Number(unitBudidaya.jumlah ?? 0);
+    if (jumlahHewan > currentPopulation) {
+      await t.rollback();
+      return res.status(400).json({
+        message: `Jumlah hewan dipanen (${jumlahHewan}) melebihi populasi saat ini (${currentPopulation}).`,
+      });
+    }
+
+    const produk = komoditas.produkId
+      ? await Produk.findOne({
+          where: { id: komoditas.produkId, isDeleted: false },
+          transaction: t,
+        })
+      : null;
 
     const data = await Laporan.create(
       {
@@ -525,23 +924,29 @@ const createLaporanPanen = async (req, res) => {
       {
         LaporanId: data.id,
         komoditasId: panen.komoditasId,
-        jumlah: panen.jumlah,
+        jumlah: jumlahPanen,
+        berat: beratPanen,
+        jumlahHewan,
       },
       { transaction: t }
     );
 
     // Handle grade data for livestock harvest (similar to plant harvest)
-    if (panen.rincianGrade && panen.rincianGrade.length > 0) {
-      const rincianGradeData = panen.rincianGrade.map((rincianGrade) => ({
-        panenId: laporanPanen.id, // Use panenId for livestock instead of panenKebunId
-        gradeId: rincianGrade.gradeId,
-        jumlah: rincianGrade.jumlah,
-      }));
-
-      await PanenRincianGrade.bulkCreate(rincianGradeData, { transaction: t });
+    if (rincianGradeData.length > 0) {
+      await PanenRincianGrade.bulkCreate(
+        rincianGradeData.map((rincianGrade) => ({
+          panenId: laporanPanen.id,
+          gradeId: rincianGrade.gradeId,
+          jumlah: rincianGrade.jumlah,
+          berat: rincianGrade.berat,
+          persentaseJumlah: rincianGrade.persentaseJumlah,
+          persentaseBerat: rincianGrade.persentaseBerat,
+        })),
+        { transaction: t }
+      );
     }
 
-    komoditas.jumlah += panen.jumlah;
+    komoditas.jumlah = Number(komoditas.jumlah ?? 0) + Number(jumlahPanen ?? 0);
     await komoditas.save({ transaction: t });
 
     if (produk) {
@@ -587,12 +992,8 @@ const createLaporanPanen = async (req, res) => {
         }
       }
     } else {
-      const unitBudidaya = await UnitBudidaya.findOne({
-        where: { id: req.body.unitBudidayaId },
-      });
-
       if (unitBudidaya.tipe == "individu") {
-        for (const item of detailPanen) {
+        for (const item of detailPanenIds) {
           await DetailPanen.create(
             {
               PanenId: laporanPanen.id,
@@ -623,8 +1024,8 @@ const createLaporanPanen = async (req, res) => {
             });
           }
         }
-      } else {
-        unitBudidaya.jumlah -= panen.jumlahHewan;
+      } else if (jumlahHewan > 0) {
+        unitBudidaya.jumlah = currentPopulation - jumlahHewan;
 
         await unitBudidaya.save({ transaction: t });
       }
@@ -634,6 +1035,10 @@ const createLaporanPanen = async (req, res) => {
 
     return res.status(201).json({
       message: "Successfully created new laporan data",
+      data: {
+        data,
+        laporanPanen,
+      },
     });
   } catch (error) {
     await t.rollback();
@@ -1030,7 +1435,7 @@ const getHasilPanenWithGrades = async (req, res) => {
             {
               model: Komoditas,
               as: "komoditas",
-              attributes: ["id", "nama"],
+              attributes: ["id", "nama", "panenConfig"],
               include: [
                 {
                   model: Satuan,
@@ -1119,9 +1524,9 @@ const getHasilPanenWithGrades = async (req, res) => {
           efisiensiPanen:
             panenKebun.estimasiPanen > 0
               ? (
-                  (panenKebun.realisasiPanen / panenKebun.estimasiPanen) *
-                  100
-                ).toFixed(2)
+                (panenKebun.realisasiPanen / panenKebun.estimasiPanen) *
+                100
+              ).toFixed(2)
               : 0,
         },
         rincianGrade: gradeSummary,
@@ -1243,7 +1648,7 @@ const getGradeSummaryByKomoditas = async (req, res) => {
             {
               model: Komoditas,
               as: "komoditas",
-              attributes: ["id", "nama"],
+              attributes: ["id", "nama", "panenConfig"],
               include: [
                 {
                   model: Satuan,
@@ -1374,6 +1779,16 @@ const getLaporanHarianKebunById = async (req, res) => {
           },
           require: true,
         },
+        ...(DailyReportMetric
+          ? [
+              {
+                model: DailyReportMetric,
+                as: "dailyReportMetrics",
+                where: { isDeleted: false },
+                required: false,
+              },
+            ]
+          : []),
         {
           model: ObjekBudidaya,
           attributes: ["namaId"],
@@ -1436,6 +1851,16 @@ const getLaporanHarianTernakById = async (req, res) => {
           },
           require: true,
         },
+        ...(DailyReportMetric
+          ? [
+              {
+                model: DailyReportMetric,
+                as: "dailyReportMetrics",
+                where: { isDeleted: false },
+                required: false,
+              },
+            ]
+          : []),
         {
           model: UnitBudidaya,
           attributes: ["nama"],
@@ -1479,53 +1904,45 @@ const getLaporanSakitById = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const laporan = await Laporan.findOne({
+    const laporanSakit = await Sakit.findOne({
       where: {
         id: id,
         isDeleted: false,
-        tipe: "sakit",
       },
+      attributes: ["id", ["diagnosisPenyakit", "nama"], "status"],
       include: [
         {
-          model: Sakit,
-          attributes: ["penyakit"],
-          require: true,
+          model: Laporan,
+          attributes: ["gambar"],
         },
         {
-          model: ObjekBudidaya,
-          attributes: ["namaId"],
-          require: false,
-        },
-        {
-          model: UnitBudidaya,
-          attributes: ["nama"],
-          require: true,
+          model: DaftarGejala,
+          attributes: ["id"],
+          required: false,
           include: [
             {
-              model: JenisBudidaya,
-              attributes: ["nama", "tipe"],
-              require: true,
+              model: Gejala,
+              attributes: ["gejala1", "gejala2", "gejala3", "gejala4"],
+              required: false,
             },
           ],
-        },
-        {
-          model: User,
-          as: "user",
-          attributes: ["name"],
-          require: true,
         },
       ],
     });
 
-    if (!laporan) {
+    if (!laporanSakit) {
       return res.status(404).json({
-        message: "Laporan not found",
+        message: "Data Sakit not found",
       });
     }
 
+    const responseData = laporanSakit.toJSON();
+    responseData.gambar = responseData.Laporan ? responseData.Laporan.gambar : null;
+    delete responseData.Laporan;
+
     return res.status(200).json({
-      message: "Successfully retrieved laporan data",
-      data: laporan,
+      message: "Successfully retrieved sakit data",
+      data: responseData,
     });
   } catch (error) {
     res.status(500).json({
@@ -1692,7 +2109,7 @@ const getLaporanPanenById = async (req, res) => {
             {
               model: Komoditas,
               as: "komoditas",
-              attributes: ["nama"],
+              attributes: ["id", "nama", "panenConfig"],
               include: [
                 {
                   model: Satuan,
@@ -1744,9 +2161,18 @@ const getLaporanPanenById = async (req, res) => {
       });
     }
 
+    const responseData = laporan.toJSON();
+
+    if (responseData.Panen?.komoditas) {
+      responseData.Panen.komoditas = attachPanenConfig(
+        responseData.Panen.komoditas
+      );
+    }
+
     return res.status(200).json({
+      status: true,
       message: "Successfully retrieved laporan data",
-      data: laporan,
+      data: responseData,
     });
   } catch (error) {
     res.status(500).json({
@@ -2006,7 +2432,7 @@ const getHasilPanenTernakWithGrades = async (req, res) => {
             {
               model: Komoditas,
               as: "komoditas",
-              attributes: ["id", "nama"],
+              attributes: ["id", "nama", "panenConfig"],
               include: [
                 {
                   model: Satuan,
@@ -2062,6 +2488,7 @@ const getHasilPanenTernakWithGrades = async (req, res) => {
       const panen = laporan.Panen;
       const grades = panen.PanenRincianGrades || [];
       const detailPanen = panen.DetailPanens || [];
+      const komoditas = attachPanenConfig(panen.komoditas);
 
       // Calculate grade summary
       const gradeSummary = grades.map((grade) => ({
@@ -2069,10 +2496,17 @@ const getHasilPanenTernakWithGrades = async (req, res) => {
         gradeNama: grade.Grade.nama,
         gradeDeskripsi: grade.Grade.deskripsi,
         jumlah: grade.jumlah,
-        persentase:
-          panen.jumlah > 0
-            ? ((grade.jumlah / panen.jumlah) * 100).toFixed(2)
-            : 0,
+        berat: grade.berat,
+        persentaseJumlah:
+          grade.persentaseJumlah ??
+          (grade.jumlah !== null && panen.jumlah > 0
+            ? Number(((grade.jumlah / panen.jumlah) * 100).toFixed(2))
+            : null),
+        persentaseBerat:
+          grade.persentaseBerat ??
+          (grade.berat !== null && panen.berat > 0
+            ? Number(((grade.berat / panen.berat) * 100).toFixed(2))
+            : null),
       }));
 
       // Get harvested animals info
@@ -2098,13 +2532,15 @@ const getHasilPanenTernakWithGrades = async (req, res) => {
           jenisBudidaya: laporan.UnitBudidaya.JenisBudidaya.nama,
         },
         komoditas: {
-          id: panen.komoditas.id,
-          nama: panen.komoditas.nama,
-          satuan: panen.komoditas.Satuan,
+          id: komoditas.id,
+          nama: komoditas.nama,
+          satuan: komoditas.Satuan,
+          panenConfig: komoditas.panenConfig,
         },
         hasilPanen: {
           jumlahPanen: panen.jumlah,
-          jumlahHewanDipanen: harvestedAnimals.length,
+          beratPanen: panen.berat,
+          jumlahHewanDipanen: panen.jumlahHewan ?? harvestedAnimals.length,
         },
         rincianGrade: gradeSummary,
         hewanDipanen: harvestedAnimals,

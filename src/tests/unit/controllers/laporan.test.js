@@ -8,6 +8,7 @@ jest.mock('../../../model/index', () => {
 
   const createMockModel = (name) => ({
     create: jest.fn(),
+    bulkCreate: jest.fn(),
     findOne: jest.fn(),
     findAll: jest.fn(),
     findAndCountAll: jest.fn(),
@@ -22,6 +23,8 @@ jest.mock('../../../model/index', () => {
     HarianKebun: createMockModel('HarianKebun'),
     HarianTernak: createMockModel('HarianTernak'),
     Sakit: createMockModel('Sakit'),
+    Gejala: createMockModel('Gejala'),
+    DaftarGejala: createMockModel('DaftarGejala'),
     Kematian: createMockModel('Kematian'),
     Vitamin: createMockModel('Vitamin'),
     PanenKebun: createMockModel('PanenKebun'),
@@ -47,6 +50,8 @@ jest.mock('../../../model/index', () => {
       HarianKebun: createMockModel('HarianKebun'),
       HarianTernak: createMockModel('HarianTernak'),
       Sakit: createMockModel('Sakit'),
+      Gejala: createMockModel('Gejala'),
+      DaftarGejala: createMockModel('DaftarGejala'),
       Kematian: createMockModel('Kematian'),
       Vitamin: createMockModel('Vitamin'),
       PanenKebun: createMockModel('PanenKebun'),
@@ -80,7 +85,6 @@ app.use((req, res, next) => {
 
 app.post('/laporan/harian-kebun', laporanController.createLaporanHarianKebun);
 app.post('/laporan/harian-ternak', laporanController.createLaporanHarianTernak);
-app.post('/laporan/sakit', laporanController.createLaporanSakit);
 app.post('/laporan/kematian', laporanController.createLaporanKematian);
 app.post('/laporan/vitamin', laporanController.createLaporanVitamin);
 app.post('/laporan/panen', laporanController.createLaporanPanen);
@@ -192,6 +196,164 @@ describe('Laporan Controller', () => {
       expect(res.body.message).toBe('HarianKebun creation failed');
       expect(mockTransaction.rollback).toHaveBeenCalledTimes(1);
       expect(mockTransaction.commit).not.toHaveBeenCalled();
+    });
+  });
+
+
+  describe('POST /laporan/panen', () => {
+    const endpoint = '/laporan/panen';
+
+    const requestBody = {
+      judul: 'Laporan Panen Kandang Layer A',
+      catatan: 'Panen pagi',
+      unitBudidayaId: 'unitLayerA',
+      objekBudidayaId: null,
+      tipe: 'panen',
+      gambar: 'https://example.com/panen.jpg',
+      panen: {
+        komoditasId: 'komoditasTelur',
+        jumlah: 1000,
+        berat: 60,
+        rincianGrade: [
+          { gradeId: 'gradeA', jumlah: 700, berat: 42 },
+          { gradeId: 'gradeB', berat: 18 },
+        ],
+      },
+      detailPanen: [],
+    };
+    const eggPanenConfig = {
+      tipePanen: 'telur',
+      modePanen: 'produksi',
+      jumlah: {
+        enabled: true,
+        required: true,
+        label: 'Jumlah panen',
+        satuan: 'butir',
+        integerOnly: true,
+      },
+      berat: {
+        enabled: true,
+        required: true,
+        label: 'Berat panen',
+        satuan: 'kilogram',
+        integerOnly: false,
+      },
+      jumlahHewan: {
+        enabled: false,
+        required: false,
+        label: 'Jumlah hewan',
+        satuan: 'ekor',
+        integerOnly: true,
+        defaultValue: 0,
+      },
+      grade: {
+        enabled: true,
+        required: false,
+        allowedFields: ['jumlah', 'berat'],
+        validateTotalJumlah: true,
+        validateTotalBerat: true,
+      },
+    };
+
+    it('should create laporan panen with mandatory egg count and weight', async () => {
+      const mockLaporanInstance = {
+        id: 'laporanPanen123',
+        ...requestBody,
+        UserId: 'mockUserId123',
+        toJSON: function() { return createPlainVersion(this); },
+      };
+      const mockPanenInstance = {
+        id: 'panen123',
+        LaporanId: 'laporanPanen123',
+        komoditasId: requestBody.panen.komoditasId,
+        jumlah: requestBody.panen.jumlah,
+        berat: requestBody.panen.berat,
+        toJSON: function() { return createPlainVersion(this); },
+      };
+      const mockKomoditasInstance = {
+        id: 'komoditasTelur',
+        jumlah: 0,
+        tipeKomoditas: 'kolektif',
+        hapusObjek: false,
+        panenConfig: eggPanenConfig,
+        save: jest.fn(async function() { return this; }),
+      };
+      const mockUnitBudidayaInstance = {
+        id: 'unitLayerA',
+        jumlah: 1000,
+        tipe: 'kolektif',
+        save: jest.fn(async function() { return this; }),
+      };
+
+      originalSequelize.Komoditas.findOne.mockResolvedValue(mockKomoditasInstance);
+      originalSequelize.UnitBudidaya.findOne.mockResolvedValue(mockUnitBudidayaInstance);
+      originalSequelize.Laporan.create.mockResolvedValue(mockLaporanInstance);
+      originalSequelize.Panen.create.mockResolvedValue(mockPanenInstance);
+      originalSequelize.PanenRincianGrade.bulkCreate.mockResolvedValue([]);
+
+      const res = await request(app).post(endpoint).send(requestBody);
+
+      expect(res.statusCode).toBe(201);
+      expect(originalSequelize.Panen.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          LaporanId: mockLaporanInstance.id,
+          komoditasId: requestBody.panen.komoditasId,
+          jumlah: 1000,
+          berat: 60,
+        }),
+        { transaction: mockTransaction }
+      );
+      expect(originalSequelize.PanenRincianGrade.bulkCreate).toHaveBeenCalledWith(
+        [
+          expect.objectContaining({
+            panenId: mockPanenInstance.id,
+            gradeId: 'gradeA',
+            jumlah: 700,
+            berat: 42,
+            persentaseJumlah: 70,
+            persentaseBerat: 70,
+          }),
+          expect.objectContaining({
+            panenId: mockPanenInstance.id,
+            gradeId: 'gradeB',
+            jumlah: null,
+            berat: 18,
+            persentaseJumlah: null,
+            persentaseBerat: 30,
+          }),
+        ],
+        { transaction: mockTransaction }
+      );
+      expect(mockKomoditasInstance.save).toHaveBeenCalledWith({ transaction: mockTransaction });
+      expect(mockTransaction.commit).toHaveBeenCalledTimes(1);
+      expect(mockTransaction.rollback).not.toHaveBeenCalled();
+    });
+
+    it('should reject laporan panen without total weight', async () => {
+      const invalidBody = {
+        ...requestBody,
+        panen: {
+          komoditasId: 'komoditasTelur',
+          jumlah: 1000,
+        },
+      };
+      const mockKomoditasInstance = {
+        id: 'komoditasTelur',
+        jumlah: 0,
+        tipeKomoditas: 'kolektif',
+        hapusObjek: false,
+        panenConfig: eggPanenConfig,
+        save: jest.fn(async function() { return this; }),
+      };
+
+      originalSequelize.Komoditas.findOne.mockResolvedValue(mockKomoditasInstance);
+
+      const res = await request(app).post(endpoint).send(invalidBody);
+
+      expect(res.statusCode).toBe(400);
+      expect(res.body.message).toBe('Berat panen wajib diisi sebagai angka kilogram lebih dari 0.');
+      expect(originalSequelize.Panen.create).not.toHaveBeenCalled();
+      expect(mockTransaction.rollback).toHaveBeenCalledTimes(1);
     });
   });
 

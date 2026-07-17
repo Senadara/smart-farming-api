@@ -53,6 +53,14 @@ describe('UnitBudidaya Model', () => {
     expect(ub.isDeleted).toBe(false);
   });
 
+  it('should store umurMinggu and default it to 0', async () => {
+    const defaultUnit = await UnitBudidaya.create({ nama: 'Unit Default Age' });
+    const agedUnit = await UnitBudidaya.create({ nama: 'Unit Age', umurMinggu: 18 });
+
+    expect(defaultUnit.umurMinggu).toBe(0);
+    expect(agedUnit.umurMinggu).toBe(18);
+  });
+
   it('should support bulkCreate', async () => {
     const units = await UnitBudidaya.bulkCreate([
       { nama: 'Unit 1', tipe: 'kolektif' },

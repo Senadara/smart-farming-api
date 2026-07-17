@@ -11,9 +11,27 @@ module.exports = (sequelize, DataTypes) => {
       },
       jumlah: {
         type: DataTypes.DOUBLE,
-        allowNull: false,
+        allowNull: true,
         validate: { isFloat: true, min: 0 },
-        comment: "Jumlah dari grade ini yang dipanen",
+        comment: "Jumlah telur dari grade ini dalam butir.",
+      },
+      berat: {
+        type: DataTypes.DOUBLE,
+        allowNull: true,
+        validate: { isFloat: true, min: 0 },
+        comment: "Berat telur dari grade ini dalam kilogram.",
+      },
+      persentaseJumlah: {
+        type: DataTypes.DOUBLE,
+        allowNull: true,
+        validate: { isFloat: true, min: 0, max: 100 },
+        comment: "Persentase jumlah telur grade terhadap total jumlah panen.",
+      },
+      persentaseBerat: {
+        type: DataTypes.DOUBLE,
+        allowNull: true,
+        validate: { isFloat: true, min: 0, max: 100 },
+        comment: "Persentase berat telur grade terhadap total berat panen.",
       },
       isDeleted: {
         type: DataTypes.BOOLEAN,

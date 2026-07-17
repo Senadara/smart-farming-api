@@ -56,5 +56,9 @@ app.listen(PORT, () => console.log(`Server is running on ${BASE_URL}`));
 
 startScheduler();
 
-// Start MQTT client untuk monitoring realtime sensor data
-startMqttClient();
+if (process.env.MQTT_ENABLED !== "false") {
+  // Start MQTT client untuk monitoring realtime sensor data
+  startMqttClient();
+} else {
+  console.log("MQTT client disabled by MQTT_ENABLED=false.");
+}

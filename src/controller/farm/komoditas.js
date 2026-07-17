@@ -7,6 +7,35 @@ const Produk = sequelize.Produk;
 const Op = sequelize.Sequelize.Op;
 
 const { getPaginationOptions } = require("../../utils/paginationUtils");
+const {
+  attachPanenConfig,
+  attachPanenConfigToRows,
+  normalizePanenConfig,
+} = require("../../utils/panenConfigUtils");
+
+const buildKomoditasPayload = (body) => {
+  const payload = { ...body };
+
+  if (body.satuanId !== undefined || body.SatuanId !== undefined) {
+    payload.satuanId = body.satuanId ?? body.SatuanId;
+  }
+
+  if (body.jenisBudidayaId !== undefined || body.JenisBudidayaId !== undefined) {
+    payload.jenisBudidayaId = body.jenisBudidayaId ?? body.JenisBudidayaId;
+  }
+
+  delete payload.SatuanId;
+  delete payload.JenisBudidayaId;
+
+  if (body.panenConfig !== undefined || body.panen_config !== undefined) {
+    payload.panenConfig = normalizePanenConfig(
+      body.panenConfig ?? body.panen_config,
+      payload
+    );
+  }
+
+  return payload;
+};
 
 const getAllKomoditas = async (req, res) => {
   try {
@@ -43,7 +72,7 @@ const getAllKomoditas = async (req, res) => {
 
     return res.status(200).json({
       message: "Successfully retrieved all komoditas data",
-      data: rows,
+      data: attachPanenConfigToRows(rows),
       totalItems: count,
       totalPages: Math.ceil(count / paginationOptions.limit),
       currentPage: parseInt(page, 10) || 1,
@@ -83,7 +112,7 @@ const getKomoditasById = async (req, res) => {
 
     return res.status(200).json({
       message: "Successfully retrieved komoditas data",
-      data: data,
+      data: attachPanenConfig(data),
     });
   } catch (error) {
     res.status(500).json({
@@ -141,7 +170,7 @@ const getKomoditasSearch = async (req, res) => {
 
     return res.status(200).json({
       message: "Successfully retrieved komoditas data",
-      data: rows,
+      data: attachPanenConfigToRows(rows),
       totalItems: count,
       totalPages: Math.ceil(count / paginationOptions.limit),
       currentPage: parseInt(page, 10) || 1,
@@ -203,7 +232,7 @@ const getKomoditasByTipe = async (req, res) => {
 
     return res.status(200).json({
       message: "Successfully retrieved komoditas data by type",
-      data: rows,
+      data: attachPanenConfigToRows(rows),
       totalItems: count,
       totalPages: Math.ceil(count / paginationOptions.limit),
       currentPage: parseInt(page, 10) || 1,
@@ -218,22 +247,19 @@ const getKomoditasByTipe = async (req, res) => {
 
 const createKomoditas = async (req, res) => {
   try {
-    const data = await Komoditas.create({
-      ...req.body,
-      SatuanId: req.body.SatuanId,
-      JenisBudidayaId: req.body.JenisBudidayaId,
-    });
+    const data = await Komoditas.create(buildKomoditasPayload(req.body));
 
     const createdDataWithIncludes = await Komoditas.findOne({
       where: { id: data.id },
       include: [{ model: JenisBudidaya }, { model: Satuan }],
     });
 
-    res.locals.createdData = createdDataWithIncludes.toJSON();
+    const responseData = attachPanenConfig(createdDataWithIncludes);
+    res.locals.createdData = responseData;
 
     return res.status(201).json({
       message: "Successfully created new komoditas data",
-      data: createdDataWithIncludes,
+      data: responseData,
     });
   } catch (error) {
     res.status(500).json({
@@ -271,7 +297,7 @@ const updateKomoditas = async (req, res) => {
       );
     }
 
-    await komoditasInstance.update(req.body, {
+    await komoditasInstance.update(buildKomoditasPayload(req.body), {
       transaction: t,
     });
 
@@ -282,11 +308,12 @@ const updateKomoditas = async (req, res) => {
       include: [{ model: JenisBudidaya }, { model: Satuan }],
     });
 
-    res.locals.updatedData = updatedDataWithIncludes.toJSON();
+    const responseData = attachPanenConfig(updatedDataWithIncludes);
+    res.locals.updatedData = responseData;
 
     return res.status(200).json({
       message: "Successfully updated komoditas data",
-      data: updatedDataWithIncludes,
+      data: responseData,
     });
   } catch (error) {
     await t.rollback();
@@ -353,7 +380,7 @@ const getAllKomoditasWithoutProduk = async (req, res) => {
     const { count, rows } = await Komoditas.findAndCountAll({
       where: {
         isDeleted: false,
-        [Op.or]: [{ ProdukId: null }, { "$Produk.isDeleted$": true }],
+        [Op.or]: [{ produkId: null }, { "$Produk.isDeleted$": true }],
       },
       include: [
         {
@@ -386,7 +413,7 @@ const getAllKomoditasWithoutProduk = async (req, res) => {
 
     return res.status(200).json({
       message: "Successfully retrieved komoditas data without produk",
-      data: rows,
+      data: attachPanenConfigToRows(rows),
       totalItems: count,
       totalPages: Math.ceil(count / paginationOptions.limit),
       currentPage: parseInt(page, 10) || 1,

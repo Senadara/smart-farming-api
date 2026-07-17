@@ -11,11 +11,11 @@ router.get('/', komoditasController.getAllKomoditas);
 
 router.get('/unproduct', komoditasController.getAllKomoditasWithoutProduk);
 
-router.get('/:id', komoditasController.getKomoditasById);
-
 router.get('/search/:nama/:tipe', komoditasController.getKomoditasSearch);
 
 router.get('/tipe/:tipe', komoditasController.getKomoditasByTipe);
+
+router.get('/:id', komoditasController.getKomoditasById);
 
 router.post('/', auditMiddleware({ model: Komoditas, tableName: "Komoditas" }), komoditasController.createKomoditas);
 
