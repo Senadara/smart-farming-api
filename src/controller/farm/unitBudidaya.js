@@ -8,6 +8,29 @@ const ScheduledUnitNotification = sequelize.ScheduledUnitNotification;
 const Logs = sequelize.Logs;
 const Op = sequelize.Sequelize.Op;
 
+const normalizeUmurMinggu = (payload, { defaultMissing = false } = {}) => {
+  if (!Object.prototype.hasOwnProperty.call(payload, "umurMinggu")) {
+    if (defaultMissing) {
+      payload.umurMinggu = 0;
+    }
+
+    return null;
+  }
+
+  if (payload.umurMinggu === null || payload.umurMinggu === "") {
+    payload.umurMinggu = 0;
+    return null;
+  }
+
+  const value = Number(payload.umurMinggu);
+  if (!Number.isInteger(value) || value < 0) {
+    return "umurMinggu must be an integer greater than or equal to 0";
+  }
+
+  payload.umurMinggu = value;
+  return null;
+};
+
 const getAllUnitBudidaya = async (req, res) => {
   try {
     const data = await UnitBudidaya.findAll({
@@ -170,7 +193,15 @@ const createUnitBudidaya = async (req, res) => {
   const t = await db.transaction();
 
   try {
-    const { jumlah = 0, tipe, jenisBudidayaId, notifikasi } = req.body;
+    const payload = { ...req.body };
+    const validationError = normalizeUmurMinggu(payload, { defaultMissing: true });
+
+    if (validationError) {
+      await t.rollback();
+      return res.status(400).json({ message: validationError });
+    }
+
+    const { jumlah = 0, tipe, jenisBudidayaId, notifikasi = {} } = payload;
 
     const jenisBudidaya = await JenisBudidaya.findOne({
       where: { id: jenisBudidayaId },
@@ -185,7 +216,7 @@ const createUnitBudidaya = async (req, res) => {
 
     const data = await UnitBudidaya.create(
       {
-        ...req.body,
+        ...payload,
         JenisBudidayaId: jenisBudidayaId,
         isDeleted: false,
       },
@@ -227,7 +258,7 @@ const createUnitBudidaya = async (req, res) => {
         });
       }
     }
-    if (notifikasi.panen != null) {
+    if (notifikasi?.panen != null) {
       await ScheduledUnitNotification.create(
         {
           ...notifikasi.panen,
@@ -246,7 +277,7 @@ Klik di sini buat lapor sekarang! 🌾`,
       );
     }
 
-    if (notifikasi.vitamin != null) {
+    if (notifikasi?.vitamin != null) {
       await ScheduledUnitNotification.create(
         {
           unitBudidayaId: data.id,
@@ -293,9 +324,17 @@ const updateUnitBudidaya = async (req, res) => {
   const t = await db.transaction();
 
   try {
+    const payload = { ...req.body };
+    const validationError = normalizeUmurMinggu(payload);
+
+    if (validationError) {
+      await t.rollback();
+      return res.status(400).json({ message: validationError });
+    }
+
     const jenisBudidaya = await JenisBudidaya.findOne({
       where: {
-        id: req.body.jenisBudidayaId,
+        id: payload.jenisBudidayaId,
         isDeleted: false,
       },
     });
@@ -310,14 +349,14 @@ const updateUnitBudidaya = async (req, res) => {
       });
     }
 
-    await UnitBudidaya.update(req.body, {
+    await UnitBudidaya.update(payload, {
       transaction: t,
       where: {
         id: req.params.id,
       },
     });
 
-    const updated = req.body;
+    const updated = { id: data.id, ...payload };
 
     if (data.tipe.toLowerCase() != updated.tipe.toLowerCase()) {
       console.log(updated);
@@ -443,8 +482,9 @@ const updateUnitBudidaya = async (req, res) => {
       }
     }
 
-    const { notifikasi } = updated;
-    if (notifikasi.panen != null) {
+    if (Object.prototype.hasOwnProperty.call(updated, "notifikasi")) {
+      const { notifikasi = {} } = updated;
+      if (notifikasi?.panen != null) {
       const panenNotifData = {
         unitBudidayaId: updated.id,
         title: `Pengingat Laporan Panen ${updated.nama ?? data.nama}`,
@@ -485,7 +525,7 @@ Klik di sini buat lapor sekarang! 🌾`,
         }
       );
     }
-    if (notifikasi.vitamin != null) {
+      if (notifikasi?.vitamin != null) {
       const vitaminNotifData = {
         unitBudidayaId: updated.id,
         title: `Pengingat Pemberian Vitamin ${updated.nama ?? data.nama}`,
@@ -525,6 +565,7 @@ Klik di sini buat lapor sekarang! 💊`,
           transaction: t,
         }
       );
+      }
     }
 
     await t.commit();
@@ -538,8 +579,9 @@ Klik di sini buat lapor sekarang! 💊`,
     return res.status(200).json({
       message: "Successfully updated unit budidaya data",
       data: {
-        id: req.params.id,
-        ...req.body,
+        id: updatedData.id,
+        ...updatedData.toJSON(),
+        unitBudidaya: updatedData,
       },
     });
   } catch (error) {

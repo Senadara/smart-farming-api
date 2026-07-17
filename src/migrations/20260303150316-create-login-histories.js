@@ -10,9 +10,29 @@ module.exports = {
 				primaryKey: true,
 				allowNull: false,
 			},
+			userId: {
+				type: Sequelize.UUID,
+				allowNull: true,
+				references: {
+					model: "user",
+					key: "id",
+				},
+				onUpdate: "CASCADE",
+				onDelete: "SET NULL",
+			},
 			email: {
 				type: Sequelize.STRING(100),
 				allowNull: false,
+			},
+			name: {
+				type: Sequelize.STRING(100),
+				allowNull: false,
+				defaultValue: "-",
+			},
+			role: {
+				type: Sequelize.STRING(50),
+				allowNull: false,
+				defaultValue: "-",
 			},
 			ipAddress: {
 				type: Sequelize.STRING(45),
@@ -37,9 +57,11 @@ module.exports = {
 		// Composite uniqueness (email + ipAddress + userAgent) enforced at
 		// application level via Eloquent updateOrCreate, not DB level,
 		// because userAgent is TEXT type (not indexable without prefix in MySQL).
-		await queryInterface.addIndex("login_histories", ["email", "ipaddress"], {
+		/*
+		await queryInterface.addIndex("login_histories", ["email", "ipAddress"], {
 			name: "login_histories_email_ip_idx",
 		});
+		*/
 	},
 
 	async down(queryInterface, Sequelize) {

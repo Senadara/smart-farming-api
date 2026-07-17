@@ -12,6 +12,17 @@ module.exports = (sequelize, DataTypes) => {
       jumlah: {
         type: DataTypes.DOUBLE,
       },
+      berat: {
+        type: DataTypes.DOUBLE,
+        allowNull: true,
+        comment: "Total berat hasil panen dalam kilogram.",
+      },
+      jumlahHewan: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        defaultValue: 0,
+        comment: "Jumlah hewan yang dipanen untuk komoditas ternak atau ikan.",
+      },
       isDeleted: {
         type: DataTypes.BOOLEAN,
         defaultValue: false,

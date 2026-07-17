@@ -10,11 +10,14 @@ module.exports = (sequelize, DataTypes) => {
         unique: true,
       },
       pakan: {
-        type: DataTypes.BOOLEAN,
+        type: DataTypes.DOUBLE,
         allowNull: false,
+        defaultValue: 0,
         validate: {
-          isIn: [[true, false]],
+          isFloat: true,
+          min: 0,
         },
+        comment: "Jumlah pakan yang diberikan dalam kilogram.",
       },
       cekKandang: {
         type: DataTypes.BOOLEAN,

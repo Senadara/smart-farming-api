@@ -15,9 +15,10 @@ describe('Rincian Panen Model', () => {
 
     const Grade = sequelize.define('Grade', {});
     const PanenKebun = sequelize.define('PanenKebun', {});
+    const Panen = sequelize.define('Panen', {});
 
     RincianPanen = defineRincianPanen(sequelize, DataTypes);
-    RincianPanen.associate({ Grade, PanenKebun });
+    RincianPanen.associate({ Grade, PanenKebun, Panen });
     await sequelize.sync();
   });
 
@@ -32,9 +33,15 @@ describe('Rincian Panen Model', () => {
  it('should create model instance with valid data', async () => {
     const rincian = await RincianPanen.create({
       jumlah: 50,      
+      berat: 3.1,
+      persentaseJumlah: 50,
+      persentaseBerat: 51.67,
       isDeleted: false,
     });
     expect(rincian.jumlah).toBe(50);
+    expect(rincian.berat).toBe(3.1);
+    expect(rincian.persentaseJumlah).toBe(50);
+    expect(rincian.persentaseBerat).toBe(51.67);
     expect(rincian.isDeleted).toBe(false);
  });
 
@@ -69,13 +76,15 @@ describe('Rincian Panen Model', () => {
     expect(rincian[1].jumlah).toBe(20);
   });
 
-  it('should not allow creating RincianPanen without jumlah', async () => {
-    expect.assertions(1);
-    try {
-    await RincianPanen.create({ isDeleted: false });
-    } catch (error) {
-    expect(error).toBeTruthy();
-    }
+  it('should allow creating RincianPanen with berat but without jumlah', async () => {
+    const rincian = await RincianPanen.create({
+      berat: 3.2,
+      persentaseBerat: 53.33,
+      isDeleted: false,
+    });
+
+    expect(rincian.jumlah).toBeUndefined();
+    expect(rincian.berat).toBe(3.2);
   });
 
   it('should not allow creating RincianPanen with negative jumlah', async () => {

@@ -217,24 +217,34 @@ function startScheduler() {
     scheduled: true,
   });
   cron.schedule("* * * * *", expireUnpaidOrders, { scheduled: true });
-  
-  // Antares sensor data fetching - every 5 minutes
-  cron.schedule("*/5 * * * *", fetchAndSaveSensorData, { scheduled: true });
+
+  const antaresSchedulerEnabled =
+    process.env.ANTARES_SCHEDULER_ENABLED !== "false";
+
+  if (antaresSchedulerEnabled) {
+    // Antares sensor data fetching - every 5 minutes
+    cron.schedule("*/5 * * * *", fetchAndSaveSensorData, { scheduled: true });
+  }
   
   console.log(
     `Notification scheduler started. Running every minute. App Timezone: Asia/Jakarta. Current Time for Scheduler: ${moment().format(
       "YYYY-MM-DD HH:mm:ss Z"
     )}`
   );
-  console.log(`Sensor scheduler started. Running every 5 minutes.`);
+  console.log(
+    antaresSchedulerEnabled
+      ? `Sensor scheduler started. Running every 5 minutes.`
+      : `Sensor scheduler disabled by ANTARES_SCHEDULER_ENABLED=false.`
+  );
   
   checkAndSendScheduledNotifications();
-  // Opsional: jalankan sekali saat start untuk testing
-  
-  // Initialize last saved time, then fetch sensor data on startup
-  initLastSavedTime().then(() => {
-    fetchAndSaveSensorData();
-  });
+
+  if (antaresSchedulerEnabled) {
+    // Initialize last saved time, then fetch sensor data on startup.
+    initLastSavedTime().then(() => {
+      fetchAndSaveSensorData();
+    });
+  }
 }
 
 module.exports = {

@@ -13,11 +13,15 @@ jest.mock('../../../model/index', () => {
   };
   const mockJenisBudidaya = {};
   const mockSatuan = {};
+  const mockProduk = {
+    findOne: jest.fn(),
+  };
 
   return {
     Komoditas: mockKomoditas,
     JenisBudidaya: mockJenisBudidaya,
     Satuan: mockSatuan,
+    Produk: mockProduk,
     sequelize: {
       transaction: jest.fn(() => ({ commit: jest.fn(), rollback: jest.fn() })),
       query: jest.fn(),
@@ -30,6 +34,7 @@ jest.mock('../../../model/index', () => {
       Komoditas: mockKomoditas,
       JenisBudidaya: mockJenisBudidaya,
       Satuan: mockSatuan,
+      Produk: mockProduk,
       sequelize: {
         transaction: jest.fn(() => ({ commit: jest.fn(), rollback: jest.fn() })),
         query: jest.fn(),
@@ -92,6 +97,30 @@ describe('Komoditas Controller', () => {
     return plain;
   };
 
+  const expectKomoditasWithPanenConfig = (actual, expected) => {
+    expect(actual).toEqual(expect.objectContaining(expected));
+    expect(actual.panenConfig).toEqual(
+      expect.objectContaining({
+        tipePanen: 'custom',
+        modePanen: 'produksi',
+        jumlah: expect.objectContaining({ enabled: true, required: true }),
+        berat: expect.objectContaining({ enabled: true, required: false }),
+        jumlahHewan: expect.objectContaining({ enabled: false, defaultValue: 0 }),
+        grade: expect.objectContaining({
+          enabled: true,
+          allowedFields: ['jumlah', 'berat'],
+        }),
+      })
+    );
+  };
+
+  const expectKomoditasRowsWithPanenConfig = (actualRows, expectedRows) => {
+    expect(actualRows).toHaveLength(expectedRows.length);
+    actualRows.forEach((row, index) => {
+      expectKomoditasWithPanenConfig(row, expectedRows[index]);
+    });
+  };
+
   describe('GET /komoditas', () => {
     it('should return 200 and paginated data when found', async () => {
       const rawMockKomoditas = {
@@ -113,13 +142,16 @@ describe('Komoditas Controller', () => {
 
       expect(res.statusCode).toBe(200);
       expect(res.body.message).toBe('Successfully retrieved all komoditas data');
-      expect(res.body.data).toEqual(mockDataRows.map(r => r.toJSON()));
+      expectKomoditasRowsWithPanenConfig(res.body.data, mockDataRows.map(r => r.toJSON()));
       expect(res.body.totalItems).toBe(mockCount);
       expect(res.body.totalPages).toBe(1);
       expect(res.body.currentPage).toBe(1);
       expect(originalSequelize.Komoditas.findAndCountAll).toHaveBeenCalledWith(expect.objectContaining({
         where: { isDeleted: false },
-        include: [{ model: originalSequelize.JenisBudidaya, required: true }],
+        include: [
+          { model: originalSequelize.JenisBudidaya, required: true },
+          { model: originalSequelize.Satuan, required: false },
+        ],
         order: [['createdAt', 'DESC']],
       }));
     });
@@ -158,7 +190,7 @@ describe('Komoditas Controller', () => {
       const res = await request(app).get('/komoditas/1');
       expect(res.statusCode).toBe(200);
       expect(res.body.message).toBe('Successfully retrieved komoditas data');
-      expect(res.body.data).toEqual(rawMockKomoditas.toJSON());
+      expectKomoditasWithPanenConfig(res.body.data, rawMockKomoditas.toJSON());
       expect(originalSequelize.Komoditas.findOne).toHaveBeenCalledWith(expect.objectContaining({
         where: { id: '1', isDeleted: false },
         include: [
@@ -190,10 +222,13 @@ describe('Komoditas Controller', () => {
 
       const res = await request(app).get('/komoditas/search/Kangkung/Hortikultura?page=1');
       expect(res.statusCode).toBe(200);
-      expect(res.body.data).toEqual(mockDataRows.map(r => r.toJSON()));
+      expectKomoditasRowsWithPanenConfig(res.body.data, mockDataRows.map(r => r.toJSON()));
       expect(originalSequelize.Komoditas.findAndCountAll).toHaveBeenCalledWith(expect.objectContaining({
         where: { isDeleted: false, nama: { [Op.like]: '%Kangkung%' } },
-        include: [{ model: originalSequelize.JenisBudidaya, required: true, where: { tipe: 'Hortikultura' } }],
+        include: [
+          { model: originalSequelize.JenisBudidaya, required: true, where: { tipe: 'Hortikultura' } },
+          { model: originalSequelize.Satuan, required: false },
+        ],
       }));
     });
 
@@ -203,7 +238,10 @@ describe('Komoditas Controller', () => {
       await request(app).get('/komoditas/search/Kangkung/all?page=1');
       expect(originalSequelize.Komoditas.findAndCountAll).toHaveBeenCalledWith(expect.objectContaining({
         where: { isDeleted: false, nama: { [Op.like]: '%Kangkung%' } },
-        include: [{ model: originalSequelize.JenisBudidaya, required: true }],
+        include: [
+          { model: originalSequelize.JenisBudidaya, required: true },
+          { model: originalSequelize.Satuan, required: false },
+        ],
       }));
     });
     
@@ -224,12 +262,12 @@ describe('Komoditas Controller', () => {
 
       const res = await request(app).get('/komoditas/tipe/Sayuran?page=1');
       expect(res.statusCode).toBe(200);
-      expect(res.body.data).toEqual(mockDataRows.map(r => r.toJSON()));
+      expectKomoditasRowsWithPanenConfig(res.body.data, mockDataRows.map(r => r.toJSON()));
       expect(originalSequelize.Komoditas.findAndCountAll).toHaveBeenCalledWith(expect.objectContaining({
         where: { isDeleted: false },
         include: [
             { model: originalSequelize.JenisBudidaya, required: true, where: { tipe: 'Sayuran' } },
-            { model: originalSequelize.Satuan, required: true },
+            { model: originalSequelize.Satuan, required: false },
         ],
       }));
     });
@@ -259,11 +297,11 @@ describe('Komoditas Controller', () => {
 
       expect(res.statusCode).toBe(201);
       expect(res.body.message).toBe('Successfully created new komoditas data');
-      expect(res.body.data).toEqual(mockFetchedWithIncludesRaw.toJSON());
+      expectKomoditasWithPanenConfig(res.body.data, mockFetchedWithIncludesRaw.toJSON());
       expect(originalSequelize.Komoditas.create).toHaveBeenCalledWith({
         ...newPayload,
-        SatuanId: newPayload.satuanId,
-        JenisBudidayaId: newPayload.jenisBudidayaId,
+        satuanId: newPayload.satuanId,
+        jenisBudidayaId: newPayload.jenisBudidayaId,
       });
       expect(originalSequelize.Komoditas.findOne).toHaveBeenCalledWith({
         where: { id: mockCreatedRaw.id },
@@ -306,12 +344,15 @@ describe('Komoditas Controller', () => {
 
       expect(res.statusCode).toBe(200);
       expect(res.body.message).toBe('Successfully updated komoditas data');
-      expect(mockInstance.update).toHaveBeenCalledWith(updatePayload);
+      expect(mockInstance.update).toHaveBeenCalledWith(
+        expect.objectContaining(updatePayload),
+        { transaction: expect.any(Object) }
+      );
       expect(originalSequelize.Komoditas.findOne).toHaveBeenCalledWith({
          where: { id: mockId },
          include: [{ model: originalSequelize.JenisBudidaya }, { model: originalSequelize.Satuan }]
       });
-      expect(res.body.data).toEqual(mockFetchedUpdatedRaw.toJSON());
+      expectKomoditasWithPanenConfig(res.body.data, mockFetchedUpdatedRaw.toJSON());
     });
   });
 

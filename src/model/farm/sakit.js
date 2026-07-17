@@ -12,6 +12,11 @@ module.exports = (sequelize, DataTypes) => {
             diagnosisPenyakit: {
                 type: DataTypes.UUID,
                 allowNull: false,
+                defaultValue: "-",
+            },
+            status: {
+                type: DataTypes.INTEGER,
+                allowNull: true,
             },
             isDeleted: {
                 type: DataTypes.BOOLEAN,
@@ -39,6 +44,7 @@ module.exports = (sequelize, DataTypes) => {
     Sakit.associate = (models) => {
         Sakit.belongsTo(models.Laporan);
         Sakit.belongsTo(models.PenyakitAyam, { foreignKey: 'diagnosisPenyakit' });
+        Sakit.hasMany(models.DaftarGejala, { foreignKey: "sakitId" });
     };
 
     return Sakit;
