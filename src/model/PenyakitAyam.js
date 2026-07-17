@@ -18,12 +18,17 @@ module.exports = (sequelize) => {
     }, {
         tableName: 'penyakit_ayam',
         timestamps: true,
+        paranoid: true,
     });
 
     PenyakitAyam.associate = (models) => {
         PenyakitAyam.hasMany(models.PenyakitGejala, {
             foreignKey: 'penyakit_id',
             as: 'penyakitGejala',
+        });
+        PenyakitAyam.hasMany(models.PenangananPenyakitAyam, {
+            foreignKey: 'penyakit_id',
+            as: 'penanganan',
         });
     };
 

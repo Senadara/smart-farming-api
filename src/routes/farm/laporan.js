@@ -102,13 +102,18 @@ router.get(
 );
 
 router.get(
-  "/riwayat-penyakit-ayam", 
+  "/riwayat-penyakit-ayam/unit/:id", 
   penyakitAyamController.getRiwayatPenyakitAyam
 );
 
 router.get(
   "/riwayat-penyakit-ayam/:id", 
   penyakitAyamController.getRiwayatPenyakitAyamById
+);
+
+router.get(
+  "/statistik-penyakit-ayam",
+  penyakitAyamController.getStatistikPenyakitAyam
 );
 
 module.exports = router;

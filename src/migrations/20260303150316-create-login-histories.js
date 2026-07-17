@@ -25,19 +25,19 @@ module.exports = {
 			createdAt: {
 				allowNull: false,
 				type: Sequelize.DATE,
-				defaultValue: Sequelize.literal("CURRENT_TIMESTAMP"),
+				
 			},
 			updatedAt: {
 				allowNull: false,
 				type: Sequelize.DATE,
-				defaultValue: Sequelize.literal("CURRENT_TIMESTAMP"),
+				
 			},
 		});
 
 		// Composite uniqueness (email + ipAddress + userAgent) enforced at
 		// application level via Eloquent updateOrCreate, not DB level,
 		// because userAgent is TEXT type (not indexable without prefix in MySQL).
-		await queryInterface.addIndex("login_histories", ["email", "ipAddress"], {
+		await queryInterface.addIndex("login_histories", ["email", "ipaddress"], {
 			name: "login_histories_email_ip_idx",
 		});
 	},

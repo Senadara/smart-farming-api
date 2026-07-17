@@ -1,4 +1,5 @@
 const { v4: uuidv4 } = require('uuid');
+const { Op } = require('sequelize');
 const db = require('../../model/index');
 
 const sequelize = db.sequelize;
@@ -10,15 +11,61 @@ const PenyakitGejala = db.PenyakitGejala;
 const Gejala = db.Gejala;
 const CfWeightLog = db.CfWeightLog;
 const PenangananPenyakitAyam = db.PenangananPenyakitAyam;
+const StatusLogPenyakitAyam = db.StatusLogPenyakitAyam;
+const User = db.User;
 const cfHelper = require("../../utils/cfHelper");
+
+const VALID_STATUS = ['Belum Ditangani', 'Pemantauan', 'Sembuh'];
 
 const getAllPenyakit = async (req, res) => {
 
     try {
-        const penyakit = await PenyakitAyam.findAll();
+        const penyakit = await PenyakitAyam.findAll({
+            order: [["updatedAt", "DESC"]],
+        });
 
         return res.status(200).json({
             message: 'Successfully retrieved penyakit data',
+            data: penyakit,
+        });
+    } catch (error) {
+        return res.status(500).json({ message: error.message, detail: error });
+    }
+};
+
+const getPenyakitWithGejala = async (req, res) => {
+    try {
+        const penyakit = await PenyakitAyam.findAll({
+            include: [{
+                model: PenyakitGejala,
+                as: 'penyakitGejala',
+                include: [{ model: Gejala, as: 'gejala' }],
+            }],
+            order: [["updatedAt", "DESC"]],
+        });
+
+        return res.status(200).json({
+            message: 'Successfully retrieved penyakit with gejala data',
+            data: penyakit,
+        });
+    } catch (error) {
+        return res.status(500).json({ message: error.message, detail: error });
+    }
+};
+
+const getPenyakitWithPenanganan = async (req, res) => {
+    try {
+        const PenangananPenyakitAyam = db.PenangananPenyakitAyam;
+        const penyakit = await PenyakitAyam.findAll({
+            include: [{
+                model: PenangananPenyakitAyam,
+                as: 'penanganan',
+            }],
+            order: [["updatedAt", "DESC"]],
+        });
+
+        return res.status(200).json({
+            message: 'Successfully retrieved penyakit with penanganan data',
             data: penyakit,
         });
     } catch (error) {
@@ -36,33 +83,29 @@ const diagnosaPenyakitAyam = async (req, res) => {
             });
         }
 
+        const gejalaIds = gejala.map((g) => g.id);
+
         const daftarGejala = await Gejala.findAll({
-            where: {
-                id: gejala.map((g) => g.id)
-            },
+            where: { id: gejalaIds },
         });
 
         const namaGejala = daftarGejala.map((g) => g.nama_gejala)
 
         const hasil = await cfHelper.diagnosePenyakit(gejala)
 
-        const penyakitGejala = await PenyakitGejala.findAll({
-            where: { penyakit_id: hasil?.id },
-        });
-
-        // Kumpulkan penanganan_id unik (filter null)
-        const penangananIds = [...new Set(
-            penyakitGejala
-                .map(pg => pg.penanganan_id)
-                .filter(id => id != null)
-        )];
-
-        // Ambil data penanganan berdasarkan id
-        const { Op } = require('sequelize');
-        const penanganan = penangananIds.length > 0
+        // Penanganan berdasarkan penyakit hasil diagnosa
+        const penanganan = hasil?.id
             ? await PenangananPenyakitAyam.findAll({
-                where: { id: { [Op.in]: penangananIds } },
-              })
+                where: { penyakit_id: hasil.id },
+            })
+            : [];
+
+        // Penanganan berdasarkan gejala yang dipilih
+        const penangananGejala = gejalaIds.length > 0
+            ? await PenangananPenyakitAyam.findAll({
+                where: { gejala_id: gejalaIds },
+                include: [{ model: Gejala, as: 'gejala', attributes: ['id', 'nama_gejala'] }],
+            })
             : [];
 
         return res.status(200).json({
@@ -72,6 +115,7 @@ const diagnosaPenyakitAyam = async (req, res) => {
                 ...hasil,
                 gejala_terdeteksi: namaGejala,
                 penanganan,
+                penangananGejala,
             }
         })
 
@@ -80,26 +124,38 @@ const diagnosaPenyakitAyam = async (req, res) => {
     }
 }
 
+
 const createPenyakit = async (req, res) => {
-    const { nama_penyakit, gejala_ids = [], metode = 'idf' } = req.body;
+    const { nama_penyakit, gejala = [] } = req.body;
 
     if (!nama_penyakit || !nama_penyakit.trim()) {
         return res.status(400).json({ message: 'nama_penyakit wajib diisi' });
     }
-    if (!Array.isArray(gejala_ids) || gejala_ids.length === 0) {
-        return res.status(400).json({ message: 'gejala_ids wajib diisi minimal 1 gejala' });
+    if (!Array.isArray(gejala) || gejala.length === 0) {
+        return res.status(400).json({ message: 'gejala wajib diisi minimal 1 gejala' });
+    }
+
+    // Validasi setiap item harus punya { id, bobot }
+    const itemTidakValid = gejala.find(
+        g => !g.id || typeof g.bobot !== 'number' || g.bobot < 0 || g.bobot > 1
+    );
+    if (itemTidakValid) {
+        return res.status(400).json({
+            message: 'Setiap gejala harus memiliki id dan bobot (angka antara 0–1)',
+        });
     }
 
     const transaction = await sequelize.transaction();
     try {
-        // Validasi gejala_ids ada di DB
+        // Validasi semua gejala id ada di DB
+        const gejalaIds = gejala.map(g => g.id);
         const gejalaValid = await Gejala.findAll({
-            where: { id: gejala_ids },
+            where: { id: gejalaIds },
             transaction,
         });
-        if (gejalaValid.length !== gejala_ids.length) {
+        if (gejalaValid.length !== gejalaIds.length) {
             await transaction.rollback();
-            return res.status(400).json({ message: 'Satu atau lebih gejala_id tidak valid' });
+            return res.status(400).json({ message: 'Satu atau lebih gejala id tidak valid' });
         }
 
         const penyakit = await PenyakitAyam.create({
@@ -107,25 +163,19 @@ const createPenyakit = async (req, res) => {
             nama_penyakit: nama_penyakit.trim(),
         }, { transaction });
 
-        // const penanganan = await PenangananPenyakitAyam.create({
-        //     id: uuidv4(),
-        //     penyakit_id: penyakit.id,
-        //     penanganan: req.body.penanganan,
-        // }, { transaction });
-
-        const relasiData = gejala_ids.map(gejalaId => ({
+        // Simpan bobot langsung dari input user (tidak menggunakan IDF)
+        const relasiData = gejala.map(g => ({
             id: uuidv4(),
             penyakit_id: penyakit.id,
-            gejala_id: gejalaId,
-            cf_weight: 0,
-            // penanganan_id: penanganan.id,
-            metode,
+            gejala_id: g.id,
+            cf_weight: g.bobot,
+            disease_frequency: 0,
+            total_disease: 0,
+            cf_updated_at: new Date(),
+            metode: 'manual',
         }));
 
         await PenyakitGejala.bulkCreate(relasiData, { transaction });
-
-        // 3. Recalculate seluruh bobot CF karena N bertambah
-        await _recalculateCF(transaction, metode);
 
         await transaction.commit();
 
@@ -139,7 +189,7 @@ const createPenyakit = async (req, res) => {
         });
 
         return res.status(201).json({
-            message: 'Penyakit berhasil ditambahkan dan bobot CF otomatis dihitung ulang',
+            message: 'Penyakit berhasil ditambahkan dengan bobot manual',
             data: result,
         });
     } catch (error) {
@@ -154,36 +204,127 @@ const createLaporanPenyakit = async (req, res) => {
         transaction = await sequelize.transaction();
         const { sakit } = req.body;
 
-        const data = await Laporan.create(
-            {
-                ...req.body,
-                UnitBudidayaId: req.body.unitBudidayaId,
-                ObjekBudidayaId: req.body.objekBudidayaId,
-                UserId: req.user.id,
-            },
-            { transaction }
-        );
+        // Support single objekBudidayaId atau array objekBudidayaIds
+        const objekIds = req.body.objekBudidayaIds && req.body.objekBudidayaIds.length > 0
+            ? req.body.objekBudidayaIds
+            : (req.body.objekBudidayaId ? [req.body.objekBudidayaId] : [null]);
+
+        // Buat LaporanGejala sekali untuk penyakit ini (tidak terikat per laporan)
         const laporanGejala = await LaporanGejala.bulkCreate(
             (sakit.gejala || []).map((g) => ({
                 penyakit_ayam_id: sakit.penyakitAyamId,
                 gejala_id: g.id || g.gejala_id,
             })),
+            { transaction, ignoreDuplicates: true }
+        );
+
+        // Buat satu Laporan + satu Sakit per ObjekBudidaya
+        const allLaporan = [];
+        const allDataPenyakit = [];
+
+        for (const objekId of objekIds) {
+            const data = await Laporan.create(
+                {
+                    ...req.body,
+                    UnitBudidayaId: req.body.unitBudidayaId,
+                    ObjekBudidayaId: objekId,
+                    UserId: req.user.id,
+                },
+                { transaction }
+            );
+
+            const dataPenyakit = await Sakit.create(
+                {
+                    LaporanId: data.id,
+                    diagnosisPenyakit: sakit.penyakitAyamId,
+                    status: req.body.status,
+                },
+                { transaction }
+            );
+
+            allLaporan.push(data);
+            allDataPenyakit.push(dataPenyakit);
+        }
+
+        await transaction.commit();
+        res.locals.createdData = { laporan: allLaporan, laporanGejala, dataPenyakit: allDataPenyakit };
+        return res.status(201).json({
+            message: 'Laporan penyakit berhasil dibuat',
+            data: { laporan: allLaporan, laporanGejala, dataPenyakit: allDataPenyakit },
+        });
+    } catch (error) {
+        if (transaction) await transaction.rollback();
+        return res.status(500).json({ message: error.message, detail: error });
+    }
+};
+
+const updateStatusLaporanPenyakit = async (req, res) => {
+    let transaction;
+    try {
+        const { id } = req.params;
+        const { status, catatan } = req.body;
+        const userId = req.user?.id ?? null;
+
+        // Validasi nilai status
+        if (!VALID_STATUS.includes(status)) {
+            return res.status(400).json({
+                message: `Status harus salah satu dari: ${VALID_STATUS.join(', ')}`,
+            });
+        }
+
+        // Cari dataPenyakit (Sakit) via id Sakit atau id Laporan
+        let dataPenyakit = await Sakit.findOne({ where: { id } });
+
+        let data;
+        if (dataPenyakit) {
+            data = await Laporan.findOne({
+                where: {
+                    id: dataPenyakit.LaporanId,
+                    isDeleted: false,
+                    tipe: 'sakit',
+                },
+            });
+        } else {
+            data = await Laporan.findOne({
+                where: { id, isDeleted: false, tipe: 'sakit' },
+            });
+            if (data) {
+                dataPenyakit = await Sakit.findOne({ where: { LaporanId: id } });
+            }
+        }
+
+        if (!data) {
+            return res.status(404).json({ message: 'Laporan penyakit tidak ditemukan' });
+        }
+        if (!dataPenyakit) {
+            return res.status(404).json({ message: 'Data penyakit tidak ditemukan' });
+        }
+
+        transaction = await sequelize.transaction();
+
+        // 1. Update status di tabel Sakit
+        await dataPenyakit.update(
+            { status, updatedAt: new Date() },
             { transaction }
         );
-        const dataPenyakit = await Sakit.create(
+
+        // 2. Tulis entri log
+        await StatusLogPenyakitAyam.create(
             {
-                LaporanId: data.id,
-                diagnosisPenyakit: sakit.penyakitAyamId,
-                status: req.body.status,
+                id: uuidv4(),
+                laporan_sakit_id: dataPenyakit.id,
+                status,
+                catatan: catatan ?? null,
+                updated_by: userId,
             },
             { transaction }
         );
 
         await transaction.commit();
-        res.locals.createdData = { data, laporanGejala, dataPenyakit };
-        return res.status(201).json({
-            message: 'Laporan penyakit berhasil dibuat',
-            data: { data, laporanGejala, dataPenyakit },
+
+        return res.status(200).json({
+            message: 'Status laporan penyakit berhasil diperbarui',
+            data: { data, dataPenyakit },
         });
     } catch (error) {
         if (transaction) await transaction.rollback();
@@ -192,32 +333,97 @@ const createLaporanPenyakit = async (req, res) => {
 };
 
 const getRiwayatPenyakitAyam = async (req, res) => {
+    const { id } = req.params;
     try {
+        const ObjekBudidaya = db.ObjekBudidaya;
 
         const laporan = await Laporan.findAll({
             where: {
                 isDeleted: false,
                 tipe: "sakit",
+                unitBudidayaId: id
             },
             include: [
                 {
                     model: Sakit,
+                    include: [
+                        {
+                            model: PenyakitAyam,
+                            paranoid: false,
+                            attributes: ['nama_penyakit']
+                        }
+                    ]
+                },
+                {
+                    model: ObjekBudidaya,
+                    attributes: ['id', 'namaId'],
                 },
             ],
+            order: [['createdAt', 'DESC']]
         });
+
+        // Kelompokkan laporan yang dibuat dalam 60 detik dengan diagnosis yang sama
+        // sebagai satu entri riwayat (karena 1 sesi bisa menghasilkan N laporan untuk N ayam)
+        const groups = [];
+        const usedIds = new Set();
+
+        for (const item of laporan) {
+            if (usedIds.has(item.id)) continue;
+
+            const data = item.toJSON();
+            const diagnosisId = data.Sakit?.diagnosisPenyakitId || data.Sakit?.diagnosisPenyakit;
+            const createdTime = new Date(data.createdAt).getTime();
+
+            // Cari laporan lain yang merupakan bagian dari sesi yang sama
+            const siblings = laporan.filter(other => {
+                if (usedIds.has(other.id) || other.id === item.id) return false;
+                const otherData = other.toJSON();
+                const otherDiagnosis = otherData.Sakit?.diagnosisPenyakitId || otherData.Sakit?.diagnosisPenyakit;
+                const otherTime = new Date(otherData.createdAt).getTime();
+                return otherDiagnosis === diagnosisId && Math.abs(otherTime - createdTime) <= 60000;
+            });
+
+            // Tandai semua laporan dalam grup ini sebagai sudah diproses
+            usedIds.add(item.id);
+            siblings.forEach(s => usedIds.add(s.id));
+
+            // Format nama penyakit
+            if (data.Sakit) {
+                data.Sakit.diagnosisPenyakit = data.Sakit.PenyakitAyam
+                    ? data.Sakit.PenyakitAyam.nama_penyakit
+                    : "Unknown";
+                delete data.Sakit.PenyakitAyam;
+            }
+
+            // Kumpulkan semua ObjekBudidaya (ayam) yang terlibat
+            const allObjek = [data.ObjekBudidaya, ...siblings.map(s => s.toJSON().ObjekBudidaya)]
+                .filter(Boolean);
+
+            // Kumpulkan semua Laporan ID dalam grup
+            const allLaporanIds = [data.id, ...siblings.map(s => s.id)];
+
+            groups.push({
+                ...data,
+                objekBudidayaList: allObjek,
+                laporanIds: allLaporanIds,
+            });
+        }
 
         return res.status(200).json({
             message: 'Successfully retrieved penyakit data',
-            data: laporan,
+            data: groups,
         });
     } catch (error) {
         return res.status(500).json({ message: error.message, detail: error });
     }
 };
 
+
 const getRiwayatPenyakitAyamById = async (req, res) => {
     try {
         const { id } = req.params;
+        const ObjekBudidaya = db.ObjekBudidaya;
+
         const laporan = await Laporan.findOne({
             where: {
                 id,
@@ -225,21 +431,58 @@ const getRiwayatPenyakitAyamById = async (req, res) => {
                 tipe: "sakit",
             },
             include: [
-                {
-                    model: Sakit,
-                },
+                { model: Sakit },
+                { model: ObjekBudidaya, attributes: ['id', 'namaId'] },
             ],
         });
 
+        if (!laporan) {
+            return res.status(404).json({ message: 'Laporan tidak ditemukan' });
+        }
+
+        const diagnosisPenyakitId = laporan.Sakit.diagnosisPenyakit;
+
+        // Cari laporan saudara: unit sama, penyakit sama, dibuat dalam 60 detik
+        const siblingLaporan = await Laporan.findAll({
+            where: {
+                isDeleted: false,
+                tipe: "sakit",
+                UnitBudidayaId: laporan.UnitBudidayaId,
+            },
+            include: [
+                {
+                    model: Sakit,
+                    where: { diagnosisPenyakit: diagnosisPenyakitId },
+                    required: true,
+                },
+                { model: ObjekBudidaya, attributes: ['id', 'namaId'] },
+            ],
+        });
+
+        // Filter yang dibuat dalam 60 detik dari laporan utama
+        const mainTime = new Date(laporan.createdAt).getTime();
+        const relatedLaporan = siblingLaporan.filter(l =>
+            Math.abs(new Date(l.createdAt).getTime() - mainTime) <= 60000
+        );
+
+        // Kumpulkan semua ObjekBudidaya dari sesi ini
+        const objekBudidayaList = relatedLaporan
+            .map(l => l.ObjekBudidaya)
+            .filter(Boolean);
+
+        // Kumpulkan semua Laporan ID dalam sesi ini
+        const laporanIds = relatedLaporan.map(l => l.id);
+
         const namaPenyakit = await PenyakitAyam.findOne({
             where: {
-                id: laporan.Sakit.diagnosisPenyakit,
+                id: diagnosisPenyakitId,
             },
+            paranoid: false,
         });
 
         const laporanGejalaList = await LaporanGejala.findAll({
             where: {
-                penyakit_ayam_id: laporan.Sakit.diagnosisPenyakit,
+                penyakit_ayam_id: diagnosisPenyakitId,
             }
         });
 
@@ -247,48 +490,118 @@ const getRiwayatPenyakitAyamById = async (req, res) => {
             where: {
                 id: laporanGejalaList.map((g) => g.gejala_id),
             },
+            paranoid: false,
         });
+
+        const penanganan = diagnosisPenyakitId
+            ? await PenangananPenyakitAyam.findAll({
+                where: { penyakit_id: diagnosisPenyakitId },
+            })
+            : [];
+
+        // Ambil penanganan yang terikat pada gejala-gejala yang terdeteksi di laporan ini
+        const gejalaIds = listGejala.map((g) => g.id);
+        const penangananGejala = gejalaIds.length > 0
+            ? await PenangananPenyakitAyam.findAll({
+                where: { gejala_id: gejalaIds },
+                include: [{ model: Gejala, as: 'gejala', attributes: ['id', 'nama_gejala'] }],
+            })
+            : [];
+
+        // Ambil riwayat status log untuk Sakit yang bersangkutan
+        const statusLog = laporan.Sakit
+            ? await StatusLogPenyakitAyam.findAll({
+                where: { laporan_sakit_id: laporan.Sakit.id },
+                include: [{
+                    model: User,
+                    as: 'petugas',
+                    attributes: ['id', 'name'],
+                }],
+                order: [['createdAt', 'ASC']],
+            })
+            : [];
 
         return res.status(200).json({
             message: 'Successfully retrieved penyakit data',
-            data: { laporan, namaPenyakit, listGejala },
+            data: {
+                laporan,
+                catatan: laporan.catatan ?? null,
+                gambar: laporan.gambar ?? null,
+                objekBudidayaList,
+                laporanIds,
+                namaPenyakit,
+                listGejala,
+                penanganan,
+                penangananGejala,
+                statusLog,
+            },
         });
     } catch (error) {
         return res.status(500).json({ message: error.message, detail: error });
     }
+
 };
 
 const createPenangananPenyakitAyam = async (req, res) => {
     let transaction;
     try {
         transaction = await sequelize.transaction();
-        const { id_penyakit, catatan, gambar } = req.body;
+        const { tipe, id_penyakit, id_gejala, catatan, gambar } = req.body;
 
+        // Validasi tipe wajib
+        if (!tipe || !['penyakit', 'gejala'].includes(tipe)) {
+            await transaction.rollback();
+            return res.status(400).json({
+                message: "tipe wajib diisi dengan nilai 'penyakit' atau 'gejala'",
+            });
+        }
+
+        let penyakitId = null;
+        let gejalaId = null;
+
+        if (tipe === 'penyakit') {
+            // Validasi penyakit ada
+            if (!id_penyakit) {
+                await transaction.rollback();
+                return res.status(400).json({ message: 'id_penyakit wajib diisi untuk tipe penyakit' });
+            }
+            const existingPenyakit = await PenyakitAyam.findOne({
+                where: { id: id_penyakit },
+                transaction,
+            });
+            if (!existingPenyakit) {
+                await transaction.rollback();
+                return res.status(404).json({ message: 'Penyakit tidak ditemukan' });
+            }
+            penyakitId = id_penyakit;
+        } else if (tipe === 'gejala') {
+            // Validasi gejala ada
+            if (!id_gejala) {
+                await transaction.rollback();
+                return res.status(400).json({ message: 'id_gejala wajib diisi untuk tipe gejala' });
+            }
+            const existingGejala = await Gejala.findOne({
+                where: { id: id_gejala },
+                transaction,
+            });
+            if (!existingGejala) {
+                await transaction.rollback();
+                return res.status(404).json({ message: 'Gejala tidak ditemukan' });
+            }
+            gejalaId = id_gejala;
+        }
+
+        // Simpan penanganan
         const data = await PenangananPenyakitAyam.create(
             {
                 id: uuidv4(),
-                penyakit_id: id_penyakit,
+                penyakit_id: penyakitId,
+                gejala_id: gejalaId,
                 penanganan: catatan,
                 gambar: gambar,
             },
             { transaction }
         );
-
-        const penyakitAyam = await PenyakitGejala.findAll({
-            where: {
-                penyakit_id: id_penyakit,
-            },
-            transaction
-        });
-
-        for (const item of penyakitAyam) {
-            await item.update(
-                {
-                    penanganan_id: data.id,
-                },
-                { transaction }
-            );
-        }
 
         await transaction.commit();
         res.locals.createdData = { data };
@@ -302,6 +615,8 @@ const createPenangananPenyakitAyam = async (req, res) => {
     }
 };
 
+
+
 const getPenangananPenyakitAyamById = async (req, res) => {
     try {
         const { id } = req.params;
@@ -314,6 +629,299 @@ const getPenangananPenyakitAyamById = async (req, res) => {
         return res.status(200).json({
             message: 'Successfully retrieved penyakit data',
             data,
+        });
+    } catch (error) {
+        return res.status(500).json({ message: error.message, detail: error });
+    }
+};
+
+
+
+const updatePenangananPenyakitAyam = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { catatan, gambar } = req.body;
+
+        const existingPenanganan = await PenangananPenyakitAyam.findOne({
+            where: { id },
+        });
+
+        if (!existingPenanganan) {
+            return res.status(404).json({ message: 'Penanganan tidak ditemukan' });
+        }
+
+        await existingPenanganan.update({
+            ...(catatan !== undefined && { penanganan: catatan }),
+            ...(gambar !== undefined && { gambar }),
+            updatedAt: new Date(),
+        });
+
+        // Update updatedAt pada PenyakitAyam induk
+        const existingPenyakit = await PenyakitAyam.findByPk(existingPenanganan.penyakit_id);
+        if (existingPenyakit) {
+            existingPenyakit.changed('nama_penyakit', true);
+            await existingPenyakit.save();
+        }
+
+        return res.status(200).json({
+            message: 'Penanganan penyakit berhasil diupdate',
+            data: existingPenanganan,
+        });
+    } catch (error) {
+        return res.status(500).json({ message: error.message, detail: error });
+    }
+};
+
+
+
+const deletePenangananPenyakitAyam = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const existingPenanganan = await PenangananPenyakitAyam.findOne({
+            where: { id },
+        });
+
+        if (!existingPenanganan) {
+            return res.status(404).json({ message: 'Penanganan tidak ditemukan' });
+        }
+
+        // Soft delete: mengisi deletedAt
+        await existingPenanganan.destroy();
+
+        return res.status(200).json({
+            message: 'Penanganan penyakit berhasil dihapus',
+        });
+    } catch (error) {
+        return res.status(500).json({ message: error.message, detail: error });
+    }
+};
+
+const updatePenyakit = async (req, res) => {
+    const { id } = req.params;
+    const { nama_penyakit, gejala } = req.body;
+
+    const transaction = await sequelize.transaction();
+    try {
+        const existingPenyakit = await PenyakitAyam.findOne({
+            where: { id },
+            transaction,
+        });
+
+        if (!existingPenyakit) {
+            await transaction.rollback();
+            return res.status(404).json({ message: 'Penyakit tidak ditemukan' });
+        }
+
+        if (nama_penyakit !== undefined) {
+            await existingPenyakit.update(
+                { nama_penyakit: nama_penyakit.trim() },
+                { transaction }
+            );
+        }
+
+        if (Array.isArray(gejala) && gejala.length > 0) {
+            // Validasi setiap item harus punya { id, bobot }
+            const itemTidakValid = gejala.find(
+                g => !g.id || typeof g.bobot !== 'number' || g.bobot < 0 || g.bobot > 1
+            );
+            if (itemTidakValid) {
+                await transaction.rollback();
+                return res.status(400).json({
+                    message: 'Setiap gejala harus memiliki id dan bobot (angka antara 0–1)',
+                });
+            }
+
+            // Validasi semua gejala id ada di DB
+            const gejalaIds = gejala.map(g => g.id);
+            const gejalaValid = await Gejala.findAll({
+                where: { id: gejalaIds },
+                transaction,
+            });
+            if (gejalaValid.length !== gejalaIds.length) {
+                await transaction.rollback();
+                return res.status(400).json({ message: 'Satu atau lebih gejala id tidak valid' });
+            }
+
+            // Ambil id relasi lama untuk hapus CfWeightLog terkait
+            const relasiLama = await PenyakitGejala.findAll({
+                where: { penyakit_id: id },
+                transaction,
+            });
+            const relasiLamaIds = relasiLama.map(r => r.id);
+
+            // Hapus CfWeightLog yang mereferensikan relasi lama (FK constraint)
+            if (relasiLamaIds.length > 0) {
+                await CfWeightLog.destroy({
+                    where: { penyakit_gejala_id: relasiLamaIds },
+                    transaction,
+                });
+            }
+
+            // Hapus relasi lama
+            await PenyakitGejala.destroy({
+                where: { penyakit_id: id },
+                transaction,
+            });
+
+            // Buat relasi baru dengan bobot langsung dari input user
+            const relasiData = gejala.map(g => ({
+                id: uuidv4(),
+                penyakit_id: id,
+                gejala_id: g.id,
+                cf_weight: g.bobot,
+                disease_frequency: 0,
+                total_disease: 0,
+                cf_updated_at: new Date(),
+                metode: 'manual',
+            }));
+            await PenyakitGejala.bulkCreate(relasiData, { transaction });
+        }
+
+        // Pastikan updatedAt PenyakitAyam selalu diperbarui dengan memanipulasi _changed
+        existingPenyakit.changed('nama_penyakit', true);
+        await existingPenyakit.save({ transaction });
+
+        await transaction.commit();
+
+        const result = await PenyakitAyam.findByPk(id, {
+            include: [{
+                model: PenyakitGejala,
+                as: 'penyakitGejala',
+                include: [{ model: Gejala, as: 'gejala' }],
+            }],
+        });
+
+        return res.status(200).json({
+            message: 'Penyakit berhasil diupdate dengan bobot manual',
+            data: result,
+        });
+    } catch (error) {
+        await transaction.rollback();
+        return res.status(500).json({ message: error.message, detail: error });
+    }
+};
+
+const deletePenyakit = async (req, res) => {
+    const { id } = req.params;
+    const transaction = await sequelize.transaction();
+
+    try {
+        const existingPenyakit = await PenyakitAyam.findOne({
+            where: { id },
+            transaction,
+        });
+
+        if (!existingPenyakit) {
+            await transaction.rollback();
+            return res.status(404).json({ message: 'Penyakit tidak ditemukan' });
+        }
+
+        // Soft delete: mengisi deletedAt
+        await existingPenyakit.destroy({ transaction });
+
+        await transaction.commit();
+
+        return res.status(200).json({
+            message: 'Penyakit berhasil dihapus',
+        });
+    } catch (error) {
+        await transaction.rollback();
+        return res.status(500).json({ message: error.message, detail: error });
+    }
+};
+
+
+
+const getStatistikPenyakitAyam = async (req, res) => {
+    try {
+        const { unitBudidayaId, year } = req.query;
+        const currentYear = year ? parseInt(year) : new Date().getFullYear();
+        
+        const whereClause = {
+            isDeleted: false,
+            tipe: "sakit"
+        };
+        
+        if (unitBudidayaId) {
+            whereClause.UnitBudidayaId = unitBudidayaId;
+        }
+
+        const laporan = await Laporan.findAll({
+            where: whereClause,
+            include: [
+                {
+                    model: Sakit,
+                    include: [
+                        {
+                            model: PenyakitAyam,
+                            paranoid: false,
+                            attributes: ['nama_penyakit']
+                        }
+                    ]
+                },
+            ]
+        });
+
+        const stats = {};
+
+        laporan.forEach(item => {
+            const date = new Date(item.createdAt);
+            if (date.getFullYear() === currentYear) {
+                const month = date.getMonth(); // 0 to 11
+                const penyakit = item.Sakit?.PenyakitAyam?.nama_penyakit || "Unknown";
+                
+                if (!stats[penyakit]) {
+                    stats[penyakit] = Array(12).fill(0);
+                }
+                
+                stats[penyakit][month] += 1;
+            }
+        });
+
+        // Format untuk frontend chart
+        const chartData = Object.keys(stats).map(penyakit => ({
+            name: penyakit,
+            data: stats[penyakit] // Array 12 elemen (Jan-Des)
+        }));
+
+        return res.status(200).json({
+            message: 'Berhasil mengambil statistik penyakit ayam',
+            year: currentYear,
+            data: chartData,
+        });
+    } catch (error) {
+        return res.status(500).json({ message: error.message, detail: error });
+    }
+};
+
+const getPenangananByGejala = async (req, res) => {
+    try {
+        // Support query: ?gejala_ids=id1,id2,id3  atau  ?gejala_ids[]=id1&gejala_ids[]=id2
+        let gejalaIds = req.query.gejala_ids;
+        if (!gejalaIds) {
+            return res.status(400).json({ message: 'gejala_ids wajib diisi (pisahkan dengan koma atau kirim sebagai array)' });
+        }
+
+        // Normalisasi: bisa string CSV atau array
+        if (typeof gejalaIds === 'string') {
+            gejalaIds = gejalaIds.split(',').map((id) => id.trim()).filter(Boolean);
+        }
+
+        if (!Array.isArray(gejalaIds) || gejalaIds.length === 0) {
+            return res.status(400).json({ message: 'gejala_ids tidak boleh kosong' });
+        }
+
+        const penanganan = await PenangananPenyakitAyam.findAll({
+            where: { gejala_id: gejalaIds },
+            include: [
+                { model: Gejala, as: 'gejala', attributes: ['id', 'nama_gejala'] },
+            ],
+        });
+
+        return res.status(200).json({
+            message: 'Berhasil mengambil penanganan berdasarkan gejala',
+            data: penanganan,
         });
     } catch (error) {
         return res.status(500).json({ message: error.message, detail: error });
@@ -358,12 +966,21 @@ const _recalculateCF = async (transaction, metode = 'idf') => {
 
 module.exports = {
     getAllPenyakit,
+    getPenyakitWithGejala,
+    getPenyakitWithPenanganan,
     getRiwayatPenyakitAyam,
     getRiwayatPenyakitAyamById,
     getPenangananPenyakitAyamById,
+    getPenangananByGejala,
+    getStatistikPenyakitAyam,
     diagnosaPenyakitAyam,
     createLaporanPenyakit,
     createPenyakit,
     createPenangananPenyakitAyam,
+    updatePenyakit,
+    updatePenangananPenyakitAyam,
+    deletePenangananPenyakitAyam,
+    updateStatusLaporanPenyakit,
+    deletePenyakit,
     _recalculateCF,
-};  
+};

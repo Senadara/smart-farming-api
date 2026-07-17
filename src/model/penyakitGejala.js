@@ -64,6 +64,10 @@ module.exports = (sequelize) => {
             foreignKey: 'penyakit_gejala_id',
             as: 'cfLogs',
         });
+        PenyakitGejala.belongsTo(models.PenangananPenyakitAyam, {
+            foreignKey: 'penanganan_id',
+            as: 'penanganan',
+        });
     };
 
     return PenyakitGejala;

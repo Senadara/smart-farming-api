@@ -6,13 +6,13 @@ module.exports = {
     await queryInterface.addColumn('pesanan', 'createdAt', {
       type: Sequelize.DATE,
       allowNull: false,
-      defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
+      
     });
 
     await queryInterface.addColumn('pesanan', 'updatedAt', {
       type: Sequelize.DATE,
       allowNull: false,
-      defaultValue: Sequelize.literal('CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP'),
+      
     });
   },
 

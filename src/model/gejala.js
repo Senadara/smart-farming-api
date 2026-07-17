@@ -19,10 +19,15 @@ module.exports = (sequelize, DataTypes) => {
                 type: DataTypes.STRING(255),
                 allowNull: false,
             },
+            deletedAt: {
+                type: DataTypes.DATE,
+                allowNull: true,
+            },
         },
         {
             tableName: 'gejala',
             freezeTableName: true,
+            paranoid: true,
         }
     );
 

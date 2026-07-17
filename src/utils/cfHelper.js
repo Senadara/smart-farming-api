@@ -53,7 +53,8 @@ const diagnosePenyakit = async (gejalaInput) => {
             {
                 model: PenyakitAyam,
                 as: 'penyakit',
-                attributes: ['id', 'nama_penyakit']
+                attributes: ['id', 'nama_penyakit'],
+                required: true
             }
         ]
     });
