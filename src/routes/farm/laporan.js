@@ -48,6 +48,12 @@ router.post(
 );
 
 router.post(
+  "/panen-simple",
+  auditMiddleware({ model: Laporan, tableName: "Laporan" }),
+  laporanController.createLaporanPanenSimple
+);
+
+router.post(
   "/hama",
   auditMiddleware({ model: Laporan, tableName: "Laporan" }),
   laporanController.createLaporanHama
@@ -103,6 +109,11 @@ router.get(
 router.get(
   "/hasil-panen-ternak-with-grades",
   laporanController.getHasilPanenTernakWithGrades
+);
+
+router.get(
+  "/ayam-tidak-bertelur",
+  laporanController.getAyamTidakBertelur
 );
 
 router.get(

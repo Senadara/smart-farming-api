@@ -1,6 +1,8 @@
+'use strict';
+
 module.exports = (sequelize, DataTypes) => {
     const Gejala = sequelize.define(
-        "Gejala",
+        'Gejala',
         {
             id: {
                 type: DataTypes.UUID,
@@ -9,32 +11,32 @@ module.exports = (sequelize, DataTypes) => {
                 allowNull: false,
                 unique: true,
             },
-            gejala1: {
+            nama_gejala: {
                 type: DataTypes.STRING(255),
                 allowNull: false,
             },
-            gejala2: {
+            gambar: {
                 type: DataTypes.STRING(255),
-                allowNull: true,
+                allowNull: false,
             },
-            gejala3: {
-                type: DataTypes.STRING(255),
-                allowNull: true,
-            },
-            gejala4: {
-                type: DataTypes.STRING(255),
+            deletedAt: {
+                type: DataTypes.DATE,
                 allowNull: true,
             },
         },
         {
-            tableName: "gejala",
+            tableName: 'gejala',
             freezeTableName: true,
-            timestamps: false,
+            paranoid: true,
         }
     );
 
-    Gejala.associate = (models) => {
-        Gejala.hasMany(models.DaftarGejala, { foreignKey: "gejalaId" });
+    Gejala.associate = function (models) {
+        // relasi bisa ditambahkan di sini
+        Gejala.hasMany(models.PenyakitGejala, {
+            foreignKey: 'gejala_id',
+            as: 'penyakit_gejala'
+        });
     };
 
     return Gejala;

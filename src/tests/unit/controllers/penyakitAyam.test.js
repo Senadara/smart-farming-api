@@ -11,11 +11,14 @@ jest.mock('../../../model/index', () => {
   const mock = () => ({
     findAll: jest.fn(), findOne: jest.fn(), findByPk: jest.fn(),
     create: jest.fn(), bulkCreate: jest.fn(), update: jest.fn(), destroy: jest.fn(),
+    decrement: jest.fn(),
   });
   return {
     PenyakitAyam: mock(), PenyakitGejala: mock(), Gejala: mock(),
     CfWeightLog: mock(), Sakit: mock(), Laporan: mock(),
     LaporanGejala: mock(), PenangananPenyakitAyam: mock(),
+    StatusLogPenyakitAyam: mock(), User: mock(),
+    Kematian: mock(), UnitBudidaya: mock(), ObjekBudidaya: mock(),
     sequelize: { transaction: jest.fn() },
     Sequelize: { Op: require('sequelize').Op },
   };
@@ -116,34 +119,34 @@ describe('PenyakitAyam Controller', () => {
   // ── 4. createPenyakit ──────────────────────────────────────────────────────
   describe('POST /penyakit – createPenyakit', () => {
     it('400 – nama_penyakit kosong', async () => {
-      const res = await request(app).post('/penyakit').send({ gejala_ids: ['g-1'] });
+      const res = await request(app).post('/penyakit').send({ gejala: [{ id: 'g-1', bobot: 0.5 }] });
       expect(res.statusCode).toBe(400);
       expect(res.body.message).toBe('nama_penyakit wajib diisi');
     });
-    it('400 – gejala_ids kosong', async () => {
-      const res = await request(app).post('/penyakit').send({ nama_penyakit: 'X', gejala_ids: [] });
+    it('400 – gejala kosong', async () => {
+      const res = await request(app).post('/penyakit').send({ nama_penyakit: 'X', gejala: [] });
       expect(res.statusCode).toBe(400);
     });
-    it('400 – salah satu gejala_id tidak valid; rollback dipanggil', async () => {
+    it('400 – salah satu gejala id tidak valid; rollback dipanggil', async () => {
       db.Gejala.findAll.mockResolvedValue([{ id: 'g-1' }]); // hanya 1 dari 2
-      const res = await request(app).post('/penyakit').send({ nama_penyakit: 'X', gejala_ids: ['g-1', 'g-bad'] });
+      const res = await request(app).post('/penyakit').send({ nama_penyakit: 'X', gejala: [{ id: 'g-1', bobot: 0.5 }, { id: 'g-bad', bobot: 0.5 }] });
       expect(res.statusCode).toBe(400);
       expect(tx.rollback).toHaveBeenCalled();
     });
-    it('201 – penyakit & relasi dibuat, CF di-recalculate, commit dipanggil', async () => {
+    it('201 – penyakit & relasi dibuat, commit dipanggil', async () => {
       db.Gejala.findAll.mockResolvedValue([{ id: 'g-1' }, { id: 'g-2' }]);
       db.PenyakitAyam.create.mockResolvedValue(makePenyakit());
       db.PenyakitGejala.bulkCreate.mockResolvedValue([]);
       db.PenyakitAyam.findByPk.mockResolvedValue(makePenyakit());
 
-      const res = await request(app).post('/penyakit').send({ nama_penyakit: 'Tetelo', gejala_ids: ['g-1', 'g-2'] });
+      const res = await request(app).post('/penyakit').send({ nama_penyakit: 'Tetelo', gejala: [{ id: 'g-1', bobot: 0.5 }, { id: 'g-2', bobot: 0.5 }] });
       expect(res.statusCode).toBe(201);
       expect(res.body.message).toContain('berhasil ditambahkan');
       expect(tx.commit).toHaveBeenCalled();
     });
     it('500 – rollback saat terjadi error DB', async () => {
       db.Gejala.findAll.mockRejectedValue(new Error('err'));
-      const res = await request(app).post('/penyakit').send({ nama_penyakit: 'X', gejala_ids: ['g-1'] });
+      const res = await request(app).post('/penyakit').send({ nama_penyakit: 'X', gejala: [{ id: 'g-1', bobot: 0.5 }] });
       expect(res.statusCode).toBe(500);
       expect(tx.rollback).toHaveBeenCalled();
     });
@@ -168,10 +171,10 @@ describe('PenyakitAyam Controller', () => {
       expect(existing.changed).toHaveBeenCalledWith('nama_penyakit', true);
       expect(tx.commit).toHaveBeenCalled();
     });
-    it('400 – gejala_ids tidak valid; rollback dipanggil', async () => {
+    it('400 – gejala tidak valid; rollback dipanggil', async () => {
       db.PenyakitAyam.findOne.mockResolvedValue(makePenyakit());
       db.Gejala.findAll.mockResolvedValue([{ id: 'g-1' }]); // 1 dari 2
-      const res = await request(app).put('/penyakit/p-1').send({ gejala_ids: ['g-1', 'g-bad'] });
+      const res = await request(app).put('/penyakit/p-1').send({ gejala: [{ id: 'g-1', bobot: 0.5 }, { id: 'g-bad', bobot: 0.5 }] });
       expect(res.statusCode).toBe(400);
       expect(tx.rollback).toHaveBeenCalled();
     });
@@ -237,26 +240,50 @@ describe('PenyakitAyam Controller', () => {
     it('404 – tidak ditemukan lewat id Sakit maupun Laporan', async () => {
       db.Sakit.findOne.mockResolvedValue(null);
       db.Laporan.findOne.mockResolvedValue(null);
-      expect((await request(app).put('/laporan-penyakit/x/status').send({ status: 'sehat' })).statusCode).toBe(404);
+      expect((await request(app).put('/laporan-penyakit/x/status').send({ status: 'Pemantauan' })).statusCode).toBe(404);
     });
     it('200 – status Sakit diupdate saat ditemukan via Sakit.id', async () => {
       const sakit = { id: 's-1', LaporanId: 'l-1', update: jest.fn(async function (p) { Object.assign(this, p); return this; }) };
       db.Sakit.findOne.mockResolvedValue(sakit);
       db.Laporan.findOne.mockResolvedValue({ id: 'l-1' });
 
-      const res = await request(app).put('/laporan-penyakit/s-1/status').send({ status: 'sehat' });
+      const res = await request(app).put('/laporan-penyakit/s-1/status').send({ status: 'Pemantauan' });
       expect(res.statusCode).toBe(200);
-      expect(sakit.update).toHaveBeenCalledWith(expect.objectContaining({ status: 'sehat' }));
+      expect(sakit.update).toHaveBeenCalledWith(expect.objectContaining({ status: 'Pemantauan' }), expect.any(Object));
+    });
+    it('200 – status Sakit diupdate ke Mati dan membuat Laporan Kematian', async () => {
+      const sakit = { id: 's-1', LaporanId: 'l-1', diagnosisPenyakit: 'p-1', update: jest.fn(async function (p) { Object.assign(this, p); return this; }) };
+      const laporan = { id: 'l-1', UnitBudidayaId: 'u-1', ObjekBudidayaId: 'o-1' };
+      db.Sakit.findOne.mockResolvedValue(sakit);
+      db.Laporan.findOne.mockResolvedValue(laporan);
+      db.PenyakitAyam.findByPk.mockResolvedValue({ id: 'p-1', nama_penyakit: 'Tetelo' });
+      db.Laporan.create.mockResolvedValue({ id: 'l-kematian-1' });
+      db.Kematian.create.mockResolvedValue({ id: 'k-1' });
+
+      const res = await request(app).put('/laporan-penyakit/s-1/status').send({ status: 'Mati', catatan: 'Mati karena sakit' });
+      expect(res.statusCode).toBe(200);
+      expect(sakit.update).toHaveBeenCalledWith(expect.objectContaining({ status: 'Mati' }), expect.any(Object));
+      expect(db.Laporan.create).toHaveBeenCalledWith(expect.objectContaining({
+        tipe: 'kematian',
+        UnitBudidayaId: 'u-1',
+        ObjekBudidayaId: 'o-1',
+      }), expect.any(Object));
+      expect(db.Kematian.create).toHaveBeenCalledWith(expect.objectContaining({
+        LaporanId: 'l-kematian-1',
+        penyebab: 'Tetelo',
+      }), expect.any(Object));
+      expect(db.ObjekBudidaya.update).toHaveBeenCalledWith({ isDeleted: true }, expect.any(Object));
+      expect(db.UnitBudidaya.decrement).toHaveBeenCalledWith('jumlah', expect.any(Object));
     });
     it('500 – DB error', async () => {
       db.Sakit.findOne.mockRejectedValue(new Error('err'));
-      expect((await request(app).put('/laporan-penyakit/s-1/status').send({ status: 'sehat' })).statusCode).toBe(500);
+      expect((await request(app).put('/laporan-penyakit/s-1/status').send({ status: 'Pemantauan' })).statusCode).toBe(500);
     });
   });
 
   // ── 9. createPenangananPenyakitAyam ──────────────────────────────────────
   describe('POST /penanganan – createPenangananPenyakitAyam', () => {
-    const body = { id_penyakit: 'p-1', catatan: 'Beri obat', gambar: null };
+    const body = { tipe: 'penyakit', id_penyakit: 'p-1', catatan: 'Beri obat', gambar: null };
     it('404 – penyakit tidak ditemukan; rollback dipanggil', async () => {
       db.PenyakitAyam.findOne.mockResolvedValue(null);
       const res = await request(app).post('/penanganan').send(body);

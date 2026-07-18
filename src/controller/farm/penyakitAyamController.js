@@ -15,7 +15,7 @@ const StatusLogPenyakitAyam = db.StatusLogPenyakitAyam;
 const User = db.User;
 const cfHelper = require("../../utils/cfHelper");
 
-const VALID_STATUS = ['Belum Ditangani', 'Pemantauan', 'Sembuh'];
+const VALID_STATUS = ['Belum Ditangani', 'Pemantauan', 'Sembuh', 'Mati'];
 
 const getAllPenyakit = async (req, res) => {
 
@@ -319,6 +319,57 @@ const updateStatusLaporanPenyakit = async (req, res) => {
             },
             { transaction }
         );
+
+        // 3. Jika status diubah menjadi 'Mati', buat laporan kematian otomatis
+        if (status === 'Mati') {
+            const Kematian = db.Kematian;
+            const UnitBudidaya = db.UnitBudidaya;
+            const ObjekBudidaya = db.ObjekBudidaya;
+
+            let penyebab = 'Sakit';
+            if (dataPenyakit.diagnosisPenyakit) {
+                const penyakit = await PenyakitAyam.findByPk(dataPenyakit.diagnosisPenyakit, { transaction });
+                if (penyakit) {
+                    penyebab = penyakit.nama_penyakit;
+                }
+            }
+
+            const tanggalMati = req.body.tanggal || req.body.kematian?.tanggal || new Date();
+            const laporanKematianData = await Laporan.create(
+                {
+                    judul: `Laporan Kematian - ${penyebab}`,
+                    tipe: "kematian",
+                    UnitBudidayaId: data.UnitBudidayaId,
+                    ObjekBudidayaId: data.ObjekBudidayaId,
+                    UserId: userId,
+                    catatan: catatan ?? null,
+                },
+                { transaction }
+            );
+
+            await Kematian.create(
+                {
+                    LaporanId: laporanKematianData.id,
+                    tanggal: tanggalMati,
+                    penyebab: penyebab,
+                },
+                { transaction }
+            );
+
+            if (data.ObjekBudidayaId) {
+                await ObjekBudidaya.update(
+                    { isDeleted: true },
+                    { transaction, where: { id: data.ObjekBudidayaId } }
+                );
+            }
+
+            if (data.UnitBudidayaId) {
+                await UnitBudidaya.decrement(
+                    "jumlah",
+                    { by: 1, transaction, where: { id: data.UnitBudidayaId } }
+                );
+            }
+        }
 
         await transaction.commit();
 

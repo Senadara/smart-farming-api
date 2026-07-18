@@ -27,6 +27,7 @@ module.exports = (sequelize, DataTypes) => {
                     'Belum Ditangani',
                     'Pemantauan',
                     'Sembuh',
+                    'Mati',
                     // Nilai lama — tetap ada agar data existing tidak rusak
                     'Sudah ditangani',
                     'Belum ditangani'
