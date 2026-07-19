@@ -53,6 +53,43 @@ const getPenyakitWithGejala = async (req, res) => {
     }
 };
 
+const getBobotGejalaTiapPenyakit = async (req, res) => {
+    try {
+        const data = await PenyakitAyam.findAll({
+            attributes: ['id', 'nama_penyakit', 'createdAt', 'updatedAt', 'deletedAt'],
+            paranoid: false,
+            include: [{
+                model: PenyakitGejala,
+                as: 'penyakitGejala',
+                attributes: ['cf_weight'],
+                include: [{ model: Gejala, as: 'gejala', attributes: ['id', 'nama_gejala'] }],
+            }],
+            order: [["nama_penyakit", "ASC"]],
+        });
+
+        // Mapping agar struktur response lebih bersih dan mudah digunakan di frontend
+        const result = data.map(penyakit => ({
+            id: penyakit.id,
+            nama_penyakit: penyakit.nama_penyakit,
+            createdAt: penyakit.createdAt,
+            updatedAt: penyakit.updatedAt,
+            deletedAt: penyakit.deletedAt,
+            gejala: penyakit.penyakitGejala.map(pg => ({
+                id: pg.gejala?.id,
+                nama_gejala: pg.gejala?.nama_gejala,
+                bobot: pg.cf_weight
+            }))
+        }));
+
+        return res.status(200).json({
+            message: 'Berhasil mengambil data gejala dan bobot tiap penyakit',
+            data: result,
+        });
+    } catch (error) {
+        return res.status(500).json({ message: error.message, detail: error });
+    }
+};
+
 const getPenyakitWithPenanganan = async (req, res) => {
     try {
         const PenangananPenyakitAyam = db.PenangananPenyakitAyam;
@@ -979,45 +1016,11 @@ const getPenangananByGejala = async (req, res) => {
     }
 };
 
-const _recalculateCF = async (transaction, metode = 'idf') => {
-    const allRelasi = await PenyakitGejala.findAll({ transaction });
-
-    const uniquePenyakitIds = [...new Set(allRelasi.map(r => r.penyakit_id))];
-    const N = uniquePenyakitIds.length;
-
-    const dfMap = {};
-    for (const r of allRelasi) {
-        dfMap[r.gejala_id] = (dfMap[r.gejala_id] || 0) + 1;
-    }
-
-    for (const r of allRelasi) {
-        const df = dfMap[r.gejala_id] || 1;
-        const cfBaru = cfHelper.computeCF(df, N, metode);
-
-        await CfWeightLog.create({
-            id: uuidv4(),
-            penyakit_gejala_id: r.id,
-            cf_weight_lama: r.cf_weight,
-            cf_weight_baru: cfBaru,
-            total_disease_lama: r.total_disease,
-            triggered_by: `recalculate_${metode}`,
-        }, { transaction });
-
-        await r.update({
-            cf_weight: cfBaru,
-            disease_frequency: df,
-            total_disease: N,
-            metode,
-            cf_updated_at: new Date(),
-        }, { transaction });
-    }
-};
-
-
 
 module.exports = {
     getAllPenyakit,
     getPenyakitWithGejala,
+    getBobotGejalaTiapPenyakit,
     getPenyakitWithPenanganan,
     getRiwayatPenyakitAyam,
     getRiwayatPenyakitAyamById,
@@ -1033,5 +1036,4 @@ module.exports = {
     deletePenangananPenyakitAyam,
     updateStatusLaporanPenyakit,
     deletePenyakit,
-    _recalculateCF,
 };

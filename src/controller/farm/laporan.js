@@ -442,6 +442,83 @@ const createLaporanSakit = async (req, res) => {
   }
 };
 
+const createLaporanSakitTanpaDiagnosa = async (req, res) => {
+  const t = await db.transaction();
+
+  try {
+    const { sakit, ...laporanData } = req.body;
+
+    if (!sakit || !sakit.penyakit) {
+      await t.rollback();
+      return res.status(400).json({
+        status: false,
+        message: "sakit.penyakit wajib diisi",
+      });
+    }
+
+    const data = await Laporan.create(
+      {
+        ...laporanData,
+        UnitBudidayaId: req.body.unitBudidayaId,
+        ObjekBudidayaId: req.body.objekBudidayaId,
+        UserId: req.user.id,
+      },
+      { transaction: t }
+    );
+
+    const laporanSakit = await Sakit.create(
+      {
+        LaporanId: data.id,
+        diagnosisPenyakit: null,
+        status: "Belum Ditangani",
+      },
+      { transaction: t, validate: false }
+    );
+
+    const gejala = await Gejala.create(
+      {
+        nama_gejala: sakit.penyakit,
+        gambar: req.body.gambar || "-",
+      },
+      { transaction: t }
+    );
+
+    const daftarGejala = await DaftarGejala.create(
+      {
+        sakitId: laporanSakit.id,
+        gejalaId: gejala.id,
+        catatan: req.body.catatan || "",
+      },
+      { transaction: t }
+    );
+
+    // Lakukan soft-delete pada gejala yang baru dibuat agar tidak muncul
+    // di master list gejala (getGejalaPenyakit), namun karena database
+    // disetting paranoid: true, datanya tetap tersimpan dan bisa direferensikan.
+    await gejala.destroy({ transaction: t });
+
+    await t.commit();
+
+    return res.status(201).json({
+      status: true,
+      message: "Successfully created new laporan sakit tanpa diagnosa",
+      data: {
+        data,
+        laporanSakit,
+        gejala,
+        daftarGejala,
+      },
+    });
+  } catch (error) {
+    await t.rollback();
+    return res.status(500).json({
+      status: false,
+      message: error.message,
+      detail: error,
+    });
+  }
+};
+
 const createLaporanKematian = async (req, res) => {
   const t = await db.transaction();
 
@@ -2924,6 +3001,7 @@ module.exports = {
   getLastHarianKebunByObjekBudidayaId,
   createLaporanHarianTernak,
   createLaporanSakit,
+  createLaporanSakitTanpaDiagnosa,
   createLaporanKematian,
   createLaporanVitamin,
   createLaporanPanen,

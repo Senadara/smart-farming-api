@@ -31,6 +31,11 @@ router.post(
   laporanController.createLaporanSakit
 );
 router.post(
+  "/sakit-tanpa-diagnosa",
+  auditMiddleware({ model: Laporan, tableName: "Laporan" }),
+  laporanController.createLaporanSakitTanpaDiagnosa
+);
+router.post(
   "/kematian",
   auditMiddleware({ model: Laporan, tableName: "Laporan" }),
   laporanController.createLaporanKematian
