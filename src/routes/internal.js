@@ -3,6 +3,15 @@ const {
   sendNotificationToSingleUserById,
   sendNotificationToTarget,
 } = require("../../services/notificationService");
+const {
+  getEggProductionDropContext,
+  getIndividualEggProductivityContext,
+  createAutomaticHealthIndication,
+} = require("../services/eggProductionHealthService");
+const {
+  readHealthSchedulerSetting,
+  runHealthIndicationScheduler,
+} = require("../../services/healthIndicationSchedulerService");
 
 const router = express.Router();
 
@@ -110,6 +119,119 @@ router.post("/notifications/spk-alert", validateInternalToken, async (req, res) 
       success: false,
       message: "Failed to send SPK alert notification",
       error: error.message,
+    });
+  }
+});
+
+router.get("/spk/egg-production-drop", validateInternalToken, async (req, res) => {
+  try {
+    const context = await getEggProductionDropContext({
+      unitBudidayaId: req.query.unitBudidayaId,
+      days: req.query.days,
+      thresholdPercent: req.query.thresholdPercent,
+      startDate: req.query.startDate,
+      endDate: req.query.endDate,
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: context,
+    });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+});
+
+router.get("/spk/individual-egg-productivity", validateInternalToken, async (req, res) => {
+  try {
+    const context = await getIndividualEggProductivityContext({
+      unitBudidayaId: req.query.unitBudidayaId,
+      days: req.query.days,
+      thresholdPercent: req.query.thresholdPercent,
+      startDate: req.query.startDate,
+      endDate: req.query.endDate,
+      sort: req.query.sort,
+      sortBy: req.query.sortBy,
+      direction: req.query.direction,
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: context,
+    });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+});
+
+router.post("/spk/health-indications", validateInternalToken, async (req, res) => {
+  try {
+    const result = await createAutomaticHealthIndication({
+      unitBudidayaId: req.body.unitBudidayaId,
+      days: req.body.days,
+      thresholdPercent: req.body.thresholdPercent,
+      startDate: req.body.startDate,
+      endDate: req.body.endDate,
+      analysisMode: req.body.analysisMode,
+      sort: req.body.sort,
+      sortBy: req.body.sortBy,
+      direction: req.body.direction,
+      userId: req.body.userId,
+      source: req.body.source || "laravel-spk",
+      notify: req.body.notify !== false,
+      targetRole: req.body.targetRole || "petugas",
+      force: req.body.force === true,
+    });
+
+    return res.status(result.created ? 201 : 200).json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+});
+
+router.get("/spk/health-scheduler", validateInternalToken, async (req, res) => {
+  try {
+    const setting = await readHealthSchedulerSetting();
+
+    return res.status(200).json({
+      success: true,
+      data: setting,
+    });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+});
+
+router.post("/spk/health-scheduler/run", validateInternalToken, async (req, res) => {
+  try {
+    const result = await runHealthIndicationScheduler({
+      manual: true,
+      source: req.body?.source || "laravel-health-scheduler-manual",
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({
+      success: false,
+      message: error.message,
     });
   }
 });

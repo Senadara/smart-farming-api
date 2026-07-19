@@ -46,6 +46,9 @@ const {
   attachPanenConfig,
   normalizePanenConfig,
 } = require("../../utils/panenConfigUtils");
+const {
+  getEggProductionDropContext,
+} = require("../../services/eggProductionHealthService");
 
 const hasNumericValue = (value) =>
   value !== undefined && value !== null && value !== "";
@@ -60,6 +63,38 @@ const parseOptionalNumber = (value) => {
 
 const percentageOf = (value, total) =>
   value === null || total <= 0 ? null : Number(((value / total) * 100).toFixed(2));
+
+const uniqueIds = (ids = []) => [...new Set(ids.filter(Boolean))];
+
+const validateDetailPanenIds = async (unitBudidayaId, detailPanenIds, transaction) => {
+  const ids = uniqueIds(detailPanenIds);
+
+  if (ids.length === 0) {
+    return { ids, message: null };
+  }
+
+  const validObjects = await ObjekBudidaya.findAll({
+    where: {
+      id: ids,
+      UnitBudidayaId: unitBudidayaId,
+      isDeleted: false,
+    },
+    attributes: ["id"],
+    transaction,
+  });
+
+  const validIds = new Set(validObjects.map((item) => item.id));
+  const invalidIds = ids.filter((id) => !validIds.has(id));
+
+  if (invalidIds.length > 0) {
+    return {
+      ids,
+      message: `detailPanen berisi ayam yang tidak valid atau bukan milik kandang ini: ${invalidIds.join(", ")}`,
+    };
+  }
+
+  return { ids, message: null };
+};
 
 const buildPositiveNumberMessage = (fieldConfig, fallbackLabel, fallbackSatuan) => {
   const label = fieldConfig.label || fallbackLabel;
@@ -972,6 +1007,19 @@ const createLaporanPanen = async (req, res) => {
       });
     }
 
+    const detailValidation = await validateDetailPanenIds(
+      req.body.unitBudidayaId,
+      detailPanenIds,
+      t
+    );
+
+    if (detailValidation.message) {
+      await t.rollback();
+      return res.status(400).json({ message: detailValidation.message });
+    }
+
+    const validDetailPanenIds = detailValidation.ids;
+
     const currentPopulation = Number(unitBudidaya.jumlah ?? 0);
     if (jumlahHewan > currentPopulation) {
       await t.rollback();
@@ -1036,8 +1084,8 @@ const createLaporanPanen = async (req, res) => {
       );
     }
 
-    if (unitBudidaya.tipe === "individu" && detailPanenIds.length > 0) {
-      for (const item of detailPanenIds) {
+    if (unitBudidaya.tipe === "individu" && validDetailPanenIds.length > 0) {
+      for (const item of validDetailPanenIds) {
         await DetailPanen.create(
           {
             PanenId: laporanPanen.id,
@@ -1248,6 +1296,19 @@ const createLaporanPanenSimple = async (req, res) => {
       });
     }
 
+    const detailValidation = await validateDetailPanenIds(
+      req.body.unitBudidayaId,
+      detailPanenIds,
+      t
+    );
+
+    if (detailValidation.message) {
+      await t.rollback();
+      return res.status(400).json({ message: detailValidation.message });
+    }
+
+    const validDetailPanenIds = detailValidation.ids;
+
     const currentPopulation = Number(unitBudidaya.jumlah ?? 0);
     if (jumlahHewan > currentPopulation) {
       await t.rollback();
@@ -1300,8 +1361,8 @@ const createLaporanPanenSimple = async (req, res) => {
       );
     }
 
-    if (unitBudidaya.tipe === "individu" && detailPanenIds.length > 0) {
-      for (const item of detailPanenIds) {
+    if (unitBudidaya.tipe === "individu" && validDetailPanenIds.length > 0) {
+      for (const item of validDetailPanenIds) {
         await DetailPanen.create(
           {
             PanenId: laporanPanen.id,
@@ -2916,7 +2977,7 @@ const getHasilPanenTernakWithGrades = async (req, res) => {
 
 const getAyamTidakBertelur = async (req, res) => {
   try {
-    const { unitBudidayaId } = req.query;
+    const { unitBudidayaId, days, thresholdPercent, startDate, endDate } = req.query;
 
     if (!unitBudidayaId) {
       return res.status(400).json({
@@ -2925,67 +2986,35 @@ const getAyamTidakBertelur = async (req, res) => {
       });
     }
 
-    let start = req.query.startDate ? new Date(req.query.startDate) : new Date();
-    if (!req.query.startDate) {
-      start.setHours(0, 0, 0, 0);
-    }
-    let end = req.query.endDate ? new Date(req.query.endDate) : new Date();
-    if (!req.query.endDate) {
-      end.setHours(23, 59, 59, 999);
-    }
-
-    // 1. Ambil semua objek budidaya (ayam) aktif di unit budidaya ini
-    const allAyam = await ObjekBudidaya.findAll({
-      where: {
-        UnitBudidayaId: unitBudidayaId,
-        isDeleted: false,
-      },
+    const context = await getEggProductionDropContext({
+      unitBudidayaId,
+      days,
+      thresholdPercent,
+      startDate,
+      endDate,
     });
-
-    // 2. Ambil detail panen (telur) yang terhubung ke laporan panen di unit ini dalam rentang tanggal
-    const detailPanenList = await DetailPanen.findAll({
-      where: {
-        isDeleted: false,
-      },
-      include: [
-        {
-          model: Panen,
-          required: true,
-          where: {
-            isDeleted: false,
-          },
-          include: [
-            {
-              model: Laporan,
-              required: true,
-              where: {
-                UnitBudidayaId: unitBudidayaId,
-                tipe: "panen",
-                createdAt: {
-                  [Op.between]: [start, end],
-                },
-                isDeleted: false,
-              },
-            },
-          ],
-        },
-      ],
-    });
-
-    // 3. Catat ID ayam yang bertelur (ada di detail panen)
-    const ayamBertelurIds = new Set(
-      detailPanenList.map((dp) => dp.ObjekBudidayaId)
-    );
-
-    // 4. Saring ayam yang tidak bertelur (tidak ada di detail panen)
-    const ayamTidakBertelur = allAyam.filter(
-      (ayam) => !ayamBertelurIds.has(ayam.id)
-    );
 
     return res.status(200).json({
       status: true,
       message: "Successfully retrieved chickens that did not lay eggs",
-      data: ayamTidakBertelur,
+      data: context.nonLayingChickens,
+      summary: {
+        code: context.code,
+        unitBudidayaId: context.unitBudidayaId,
+        unitName: context.unitName,
+        unitType: context.unitType,
+        isIndividualHarvestReady: context.isIndividualHarvestReady,
+        period: context.period,
+        thresholdPercent: context.thresholdPercent,
+        activeChickenCount: context.activeChickenCount,
+        layingChickenCount: context.layingChickenCount,
+        nonLayingChickenCount: context.nonLayingChickenCount,
+        nonLayingPercent: context.nonLayingPercent,
+        isIndication: context.isIndication,
+        status: context.status,
+        message: context.message,
+        daily: context.daily,
+      },
     });
   } catch (error) {
     return res.status(500).json({

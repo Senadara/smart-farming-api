@@ -14,9 +14,58 @@ const {
 const { client } = require("../config/redis");
 const { generateOTP } = require("../config/otp");
 const passport = require("passport");
-const { where } = require("sequelize");
+const { Op } = require("sequelize");
 const { encrypt } = require("../config/bcrypt");
 const Toko = sequelize.Toko;
+
+function normalizeFcmToken(fcmToken) {
+  if (typeof fcmToken !== "string") {
+    return null;
+  }
+
+  const normalizedToken = fcmToken.trim();
+  return normalizedToken.length > 0 ? normalizedToken : null;
+}
+
+function hasFcmToken(user) {
+  return Boolean(normalizeFcmToken(user?.fcmToken));
+}
+
+async function clearFcmTokenFromOtherUsers(userId, fcmToken, options = {}) {
+  const normalizedToken = normalizeFcmToken(fcmToken);
+
+  if (!userId || !normalizedToken) {
+    return;
+  }
+
+  await User.update(
+    { fcmToken: null },
+    {
+      where: {
+        id: { [Op.ne]: userId },
+        fcmToken: normalizedToken,
+      },
+      ...options,
+    }
+  );
+}
+
+async function persistFcmTokenForUser(user, fcmToken, options = {}) {
+  const normalizedToken = normalizeFcmToken(fcmToken);
+
+  if (!user || !normalizedToken) {
+    return false;
+  }
+
+  await clearFcmTokenFromOtherUsers(user.id, normalizedToken, options);
+
+  if (user.fcmToken !== normalizedToken) {
+    user.fcmToken = normalizedToken;
+    await user.save(options);
+  }
+
+  return true;
+}
 
 const login = async (req, res, next) => {
   try {
@@ -78,6 +127,8 @@ const login = async (req, res, next) => {
         message: "Email sudah dibanned",
       });
     }
+    await persistFcmTokenForUser(userExist, req.body.fcmToken);
+
     let idAsli = null;
     if (userExist.isActive && userExist.role == "pjawab") {
       idAsli = await Toko.findOne({
@@ -96,6 +147,7 @@ const login = async (req, res, next) => {
       role: userExist.role,
       avatar: userExist.avatarUrl,
       idAsli: idAsli ? idAsli.UserId : null,
+      hasFcmToken: hasFcmToken(userExist),
     };
 
     const token = generateAccessToken(usr);
@@ -184,6 +236,7 @@ const register = async (req, res, next) => {
 
     const userData = {
       ...user.data,
+      fcmToken: normalizeFcmToken(req.body.fcmToken),
       expiredTime: user.data.role === "user" ? new Date() : null,
     };
 
@@ -195,6 +248,10 @@ const register = async (req, res, next) => {
     }
 
     const newUser = await User.create(userData, {
+      transaction: t,
+    });
+
+    await clearFcmTokenFromOtherUsers(newUser.id, newUser.fcmToken, {
       transaction: t,
     });
 
@@ -220,6 +277,7 @@ const register = async (req, res, next) => {
         phone: newUser.phone,
         expiredTime: newUser.expiredTime,
         role: newUser.role,
+        hasFcmToken: hasFcmToken(newUser),
       },
     });
   } catch (error) {
@@ -930,8 +988,22 @@ const googleLink = async (req, res, next) => {
 
 const updateFcmToken = async (req, res, next) => {
   try {
-    const { fcmToken } = req.body;
-    const userId = req.user.id;
+    const fcmToken = normalizeFcmToken(req.body.fcmToken);
+    const userId = req.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({
+        status: false,
+        message: "Unauthorized",
+      });
+    }
+
+    if (!fcmToken) {
+      return res.status(422).json({
+        status: false,
+        message: "FCM token is required",
+      });
+    }
 
     const user = await User.findOne({
       where: {
@@ -946,12 +1018,15 @@ const updateFcmToken = async (req, res, next) => {
       });
     }
 
-    user.fcmToken = fcmToken;
-    await user.save();
+    await persistFcmTokenForUser(user, fcmToken);
 
     return res.status(200).json({
       status: true,
       message: "FCM token updated successfully",
+      data: {
+        userId: user.id,
+        hasFcmToken: hasFcmToken(user),
+      },
     });
   } catch (error) {
     next(new Error("controller/auth.js:updateFcmToken: " + error.message));

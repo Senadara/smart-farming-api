@@ -12,6 +12,7 @@ const PesananDetail = sequelize.PesananDetail;
 const Produk = sequelize.Produk;
 const Komoditas = sequelize.Komoditas;
 const MidtransOrder = sequelize.MidtransOrder;
+const { checkHealthIndicationScheduler } = require("./healthIndicationSchedulerService");
 
 async function checkAndSendScheduledNotifications() {
   const now = moment();
@@ -155,6 +156,8 @@ async function checkAndSendScheduledNotifications() {
       error
     );
   }
+
+  await checkHealthIndicationScheduler();
 }
 async function expireUnpaidOrders() {
   const cutoff = moment().subtract(1, "hours").toDate();
