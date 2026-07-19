@@ -22,6 +22,19 @@ module.exports = (sequelize, DataTypes) => {
                 type: DataTypes.BOOLEAN,
                 defaultValue: false,
             },
+            status: {
+                type: DataTypes.ENUM(
+                    'Belum Ditangani',
+                    'Pemantauan',
+                    'Sembuh',
+                    'Mati',
+                    // Nilai lama — tetap ada agar data existing tidak rusak
+                    'Sudah ditangani',
+                    'Belum ditangani'
+                ),
+                allowNull: false,
+                defaultValue: 'Belum Ditangani',
+            },
         },
         {
             tableName: "sakit",

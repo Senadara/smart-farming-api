@@ -1,11 +1,16 @@
 const sequelize = require("../../model/index");
+const { _recalculateCF } = require("./penyakitAyamController");
 
 const Gejala = sequelize.Gejala;
-const penyakitGejala = sequelize.PenyakitGejala;
+const PenyakitGejala = sequelize.PenyakitGejala;
+const LaporanGejala = sequelize.LaporanGejala;
+const CfWeightLog = sequelize.CfWeightLog;
 
 const getGejalaPenyakit = async (req, res) => {
     try {
-        const gejala = await Gejala.findAll();
+        const gejala = await Gejala.findAll({
+            order: [["updatedAt", "DESC"]],
+        });
 
         if (!gejala) {
             return res.status(404).json({
@@ -60,7 +65,8 @@ const createGejalaPenyakit = async (req, res) => {
 
 const updateGejalaPenyakit = async (req, res) => {
     try {
-        const { id, nama_gejala, gambar } = req.body;
+        const { id } = req.params;
+        const { nama_gejala, gambar } = req.body;
 
         const existingGejala = await Gejala.findOne({
             where: {
@@ -92,32 +98,35 @@ const updateGejalaPenyakit = async (req, res) => {
 };
 
 const deleteGejalaPenyakit = async (req, res) => {
-    try {
-        const { id } = req.body;
+    const { id } = req.params;
+    const transaction = await sequelize.sequelize.transaction();
 
+    try {
         const existingGejala = await Gejala.findOne({
-            where: {
-                id,
-            },
+            where: { id },
+            transaction,
         });
 
         if (!existingGejala) {
+            await transaction.rollback();
             return res.status(404).json({
-                message: "Gejala penyakit data not found",
+                message: 'Gejala penyakit data not found',
             });
         }
 
-        const gejala = await existingGejala.destroy();
+        // Soft delete: hanya mengisi deletedAt, data relasi tetap aman
+        await existingGejala.destroy({ transaction });
+
+        await _recalculateCF(transaction, 'idf');
+
+        await transaction.commit();
 
         return res.status(200).json({
-            message: "Successfully deleted gejala penyakit data",
-            data: gejala,
+            message: 'Successfully deleted gejala penyakit data',
         });
     } catch (error) {
-        res.status(500).json({
-            message: error.message,
-            detail: error,
-        });
+        await transaction.rollback();
+        return res.status(500).json({ message: error.message, detail: error });
     }
 };
 

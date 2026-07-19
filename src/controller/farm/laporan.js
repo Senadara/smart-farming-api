@@ -905,9 +905,9 @@ const createLaporanPanen = async (req, res) => {
 
     const produk = komoditas.produkId
       ? await Produk.findOne({
-          where: { id: komoditas.produkId, isDeleted: false },
-          transaction: t,
-        })
+        where: { id: komoditas.produkId, isDeleted: false },
+        transaction: t,
+      })
       : null;
 
     const data = await Laporan.create(
@@ -959,9 +959,17 @@ const createLaporanPanen = async (req, res) => {
       );
     }
 
-    if (komoditas.tipeKomoditas == "individu") {
-      if (komoditas.hapusObjek == true) {
-        if (req.body.objekBudidayaId != null) {
+    if (unitBudidaya.tipe === "individu" && detailPanenIds.length > 0) {
+      for (const item of detailPanenIds) {
+        await DetailPanen.create(
+          {
+            PanenId: laporanPanen.id,
+            ObjekBudidayaId: item,
+          },
+          { transaction: t }
+        );
+
+        if (komoditas.hapusObjek === true) {
           await ObjekBudidaya.update(
             {
               isDeleted: true,
@@ -969,7 +977,7 @@ const createLaporanPanen = async (req, res) => {
             {
               transaction: t,
               where: {
-                id: req.body.objekBudidayaId,
+                id: item,
               },
             }
           );
@@ -981,28 +989,12 @@ const createLaporanPanen = async (req, res) => {
               id: req.body.unitBudidayaId,
             },
           });
-        } else {
-          await UnitBudidaya.decrement("jumlah", {
-            by: 1,
-            transaction: t,
-            where: {
-              id: req.body.unitBudidayaId,
-            },
-          });
         }
       }
     } else {
-      if (unitBudidaya.tipe == "individu") {
-        for (const item of detailPanenIds) {
-          await DetailPanen.create(
-            {
-              PanenId: laporanPanen.id,
-              ObjekBudidayaId: item,
-            },
-            { transaction: t }
-          );
-
-          if (komoditas.hapusObjek == true) {
+      if (komoditas.tipeKomoditas === "individu") {
+        if (komoditas.hapusObjek === true) {
+          if (req.body.objekBudidayaId != null) {
             await ObjekBudidaya.update(
               {
                 isDeleted: true,
@@ -1010,7 +1002,7 @@ const createLaporanPanen = async (req, res) => {
               {
                 transaction: t,
                 where: {
-                  id: item,
+                  id: req.body.objekBudidayaId,
                 },
               }
             );
@@ -1022,11 +1014,18 @@ const createLaporanPanen = async (req, res) => {
                 id: req.body.unitBudidayaId,
               },
             });
+          } else {
+            await UnitBudidaya.decrement("jumlah", {
+              by: 1,
+              transaction: t,
+              where: {
+                id: req.body.unitBudidayaId,
+              },
+            });
           }
         }
       } else if (jumlahHewan > 0) {
         unitBudidaya.jumlah = currentPopulation - jumlahHewan;
-
         await unitBudidaya.save({ transaction: t });
       }
     }
@@ -1043,6 +1042,272 @@ const createLaporanPanen = async (req, res) => {
   } catch (error) {
     await t.rollback();
     return res.status(500).json({
+      message: error.message,
+      detail: error,
+    });
+  }
+};
+
+const createLaporanPanenSimple = async (req, res) => {
+  const t = await db.transaction();
+
+  try {
+    const { panen, detailPanen } = req.body;
+    const detailPanenIds = Array.isArray(detailPanen) ? detailPanen : [];
+
+    if (!panen || !panen.komoditasId) {
+      await t.rollback();
+      return res.status(400).json({
+        message: "Data panen dan komoditas wajib diisi.",
+      });
+    }
+
+    const komoditas = await Komoditas.findOne({
+      where: { id: panen.komoditasId, isDeleted: false },
+      include: [
+        {
+          model: Satuan,
+          required: false,
+        },
+      ],
+      transaction: t,
+    });
+
+    if (!komoditas) {
+      await t.rollback();
+      return res.status(404).json({
+        message: "Komoditas tidak ditemukan.",
+      });
+    }
+
+    const panenConfig = normalizePanenConfig(komoditas.panenConfig, komoditas);
+
+    const jumlahValidation = validatePositiveField(
+      panen.jumlah,
+      panenConfig.jumlah,
+      "Jumlah panen",
+      "satuan"
+    );
+
+    if (jumlahValidation.message) {
+      await t.rollback();
+      return res.status(400).json({ message: jumlahValidation.message });
+    }
+
+    const beratValidation = validatePositiveField(
+      panen.berat,
+      panenConfig.berat,
+      "Berat panen",
+      "kg"
+    );
+
+    if (beratValidation.message) {
+      await t.rollback();
+      return res.status(400).json({ message: beratValidation.message });
+    }
+
+    const jumlahPanen = jumlahValidation.value;
+    const beratPanen = beratValidation.value;
+    const rawJumlahHewan = parseOptionalNumber(panen.jumlahHewan);
+    const jumlahHewanConfig = {
+      ...panenConfig.jumlahHewan,
+      integerOnly: true,
+    };
+    let jumlahHewan = Number(jumlahHewanConfig.defaultValue ?? 0) || 0;
+
+    if (!jumlahHewanConfig.enabled) {
+      if (rawJumlahHewan !== null && rawJumlahHewan > 0) {
+        await t.rollback();
+        return res.status(400).json({
+          message: "Jumlah hewan tidak digunakan untuk komoditas ini.",
+        });
+      }
+    } else if (rawJumlahHewan === null) {
+      if (jumlahHewanConfig.required) {
+        await t.rollback();
+        return res.status(400).json({
+          message: buildPositiveNumberMessage(
+            jumlahHewanConfig,
+            "Jumlah hewan yang dipanen",
+            "ekor"
+          ),
+        });
+      }
+    } else {
+      if (
+        !Number.isFinite(rawJumlahHewan) ||
+        rawJumlahHewan < 0 ||
+        !Number.isInteger(rawJumlahHewan)
+      ) {
+        await t.rollback();
+        return res.status(400).json({
+          message: "Jumlah hewan yang dipanen harus berupa angka bulat minimal 0.",
+        });
+      }
+
+      if (jumlahHewanConfig.required && rawJumlahHewan <= 0) {
+        await t.rollback();
+        return res.status(400).json({
+          message: buildPositiveNumberMessage(
+            jumlahHewanConfig,
+            "Jumlah hewan yang dipanen",
+            "ekor"
+          ),
+        });
+      }
+
+      jumlahHewan = rawJumlahHewan;
+    }
+
+    const unitBudidaya = await UnitBudidaya.findOne({
+      where: { id: req.body.unitBudidayaId, isDeleted: false },
+      transaction: t,
+    });
+
+    if (!unitBudidaya) {
+      await t.rollback();
+      return res.status(404).json({
+        message: "Unit budidaya tidak ditemukan.",
+      });
+    }
+
+    const currentPopulation = Number(unitBudidaya.jumlah ?? 0);
+    if (jumlahHewan > currentPopulation) {
+      await t.rollback();
+      return res.status(400).json({
+        message: `Jumlah hewan dipanen (${jumlahHewan}) melebihi populasi saat ini (${currentPopulation}).`,
+      });
+    }
+
+    const produk = komoditas.produkId
+      ? await Produk.findOne({
+        where: { id: komoditas.produkId, isDeleted: false },
+        transaction: t,
+      })
+      : null;
+
+    const data = await Laporan.create(
+      {
+        judul: req.body.judul || `Laporan Panen - ${komoditas.nama}`,
+        tipe: "panen",
+        UnitBudidayaId: req.body.unitBudidayaId,
+        ObjekBudidayaId: req.body.objekBudidayaId,
+        UserId: req.user.id,
+        gambar: null,
+        catatan: null,
+      },
+      { transaction: t }
+    );
+
+    const laporanPanen = await Panen.create(
+      {
+        LaporanId: data.id,
+        komoditasId: panen.komoditasId,
+        jumlah: jumlahPanen,
+        berat: beratPanen,
+        jumlahHewan,
+      },
+      { transaction: t }
+    );
+
+    komoditas.jumlah = Number(komoditas.jumlah ?? 0) + Number(jumlahPanen ?? 0);
+    await komoditas.save({ transaction: t });
+
+    if (produk) {
+      await produk.update(
+        {
+          nama: komoditas.nama,
+          stok: komoditas.jumlah,
+        },
+        { transaction: t }
+      );
+    }
+
+    if (unitBudidaya.tipe === "individu" && detailPanenIds.length > 0) {
+      for (const item of detailPanenIds) {
+        await DetailPanen.create(
+          {
+            PanenId: laporanPanen.id,
+            ObjekBudidayaId: item,
+          },
+          { transaction: t }
+        );
+
+        if (komoditas.hapusObjek === true) {
+          await ObjekBudidaya.update(
+            {
+              isDeleted: true,
+            },
+            {
+              transaction: t,
+              where: {
+                id: item,
+              },
+            }
+          );
+
+          await UnitBudidaya.decrement("jumlah", {
+            by: 1,
+            transaction: t,
+            where: {
+              id: req.body.unitBudidayaId,
+            },
+          });
+        }
+      }
+    } else {
+      if (komoditas.tipeKomoditas === "individu") {
+        if (komoditas.hapusObjek === true) {
+          if (req.body.objekBudidayaId != null) {
+            await ObjekBudidaya.update(
+              {
+                isDeleted: true,
+              },
+              {
+                transaction: t,
+                where: {
+                  id: req.body.objekBudidayaId,
+                },
+              }
+            );
+
+            await UnitBudidaya.decrement("jumlah", {
+              by: 1,
+              transaction: t,
+              where: {
+                id: req.body.unitBudidayaId,
+              },
+            });
+          } else {
+            await UnitBudidaya.decrement("jumlah", {
+              by: 1,
+              transaction: t,
+              where: {
+                id: req.body.unitBudidayaId,
+              },
+            });
+          }
+        }
+      } else if (jumlahHewan > 0) {
+        unitBudidaya.jumlah = currentPopulation - jumlahHewan;
+        await unitBudidaya.save({ transaction: t });
+      }
+    }
+
+    await t.commit();
+
+    return res.status(201).json({
+      status: true,
+      message: "Successfully created new laporan data",
+      data: {
+        data,
+        laporanPanen,
+      },
+    });
+  } catch (error) {
+    await t.rollback();
+    return res.status(500).json({
+      status: false,
       message: error.message,
       detail: error,
     });
@@ -1781,13 +2046,13 @@ const getLaporanHarianKebunById = async (req, res) => {
         },
         ...(DailyReportMetric
           ? [
-              {
-                model: DailyReportMetric,
-                as: "dailyReportMetrics",
-                where: { isDeleted: false },
-                required: false,
-              },
-            ]
+            {
+              model: DailyReportMetric,
+              as: "dailyReportMetrics",
+              where: { isDeleted: false },
+              required: false,
+            },
+          ]
           : []),
         {
           model: ObjekBudidaya,
@@ -1853,13 +2118,13 @@ const getLaporanHarianTernakById = async (req, res) => {
         },
         ...(DailyReportMetric
           ? [
-              {
-                model: DailyReportMetric,
-                as: "dailyReportMetrics",
-                where: { isDeleted: false },
-                required: false,
-              },
-            ]
+            {
+              model: DailyReportMetric,
+              as: "dailyReportMetrics",
+              where: { isDeleted: false },
+              required: false,
+            },
+          ]
           : []),
         {
           model: UnitBudidaya,
@@ -2572,6 +2837,88 @@ const getHasilPanenTernakWithGrades = async (req, res) => {
   }
 };
 
+const getAyamTidakBertelur = async (req, res) => {
+  try {
+    const { unitBudidayaId } = req.query;
+
+    if (!unitBudidayaId) {
+      return res.status(400).json({
+        status: false,
+        message: "unitBudidayaId wajib diisi",
+      });
+    }
+
+    let start = req.query.startDate ? new Date(req.query.startDate) : new Date();
+    if (!req.query.startDate) {
+      start.setHours(0, 0, 0, 0);
+    }
+    let end = req.query.endDate ? new Date(req.query.endDate) : new Date();
+    if (!req.query.endDate) {
+      end.setHours(23, 59, 59, 999);
+    }
+
+    // 1. Ambil semua objek budidaya (ayam) aktif di unit budidaya ini
+    const allAyam = await ObjekBudidaya.findAll({
+      where: {
+        UnitBudidayaId: unitBudidayaId,
+        isDeleted: false,
+      },
+    });
+
+    // 2. Ambil detail panen (telur) yang terhubung ke laporan panen di unit ini dalam rentang tanggal
+    const detailPanenList = await DetailPanen.findAll({
+      where: {
+        isDeleted: false,
+      },
+      include: [
+        {
+          model: Panen,
+          required: true,
+          where: {
+            isDeleted: false,
+          },
+          include: [
+            {
+              model: Laporan,
+              required: true,
+              where: {
+                UnitBudidayaId: unitBudidayaId,
+                tipe: "panen",
+                createdAt: {
+                  [Op.between]: [start, end],
+                },
+                isDeleted: false,
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    // 3. Catat ID ayam yang bertelur (ada di detail panen)
+    const ayamBertelurIds = new Set(
+      detailPanenList.map((dp) => dp.ObjekBudidayaId)
+    );
+
+    // 4. Saring ayam yang tidak bertelur (tidak ada di detail panen)
+    const ayamTidakBertelur = allAyam.filter(
+      (ayam) => !ayamBertelurIds.has(ayam.id)
+    );
+
+    return res.status(200).json({
+      status: true,
+      message: "Successfully retrieved chickens that did not lay eggs",
+      data: ayamTidakBertelur,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      status: false,
+      message: error.message,
+      detail: error,
+    });
+  }
+};
+
 module.exports = {
   createLaporanHarianKebun,
   getLastHarianKebunByObjekBudidayaId,
@@ -2580,6 +2927,7 @@ module.exports = {
   createLaporanKematian,
   createLaporanVitamin,
   createLaporanPanen,
+  createLaporanPanenSimple,
   createLaporanPanenKebun,
   createLaporanHama,
   createLaporanPenggunaanInventaris,
@@ -2596,4 +2944,5 @@ module.exports = {
   getHasilPanenWithGrades,
   getHasilPanenTernakWithGrades,
   getGradeSummaryByKomoditas,
+  getAyamTidakBertelur,
 };

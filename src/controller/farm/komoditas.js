@@ -355,7 +355,7 @@ const deleteKomoditas = async (req, res) => {
     await data.save({ transaction: t });
 
     await t.commit();
-
+6
     res.locals.updatedData = data.toJSON();
 
     return res.status(200).json({

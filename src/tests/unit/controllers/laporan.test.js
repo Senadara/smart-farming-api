@@ -14,6 +14,7 @@ jest.mock('../../../model/index', () => {
     findAndCountAll: jest.fn(),
     update: jest.fn(),
     save: jest.fn(async function() { return this; }),
+    decrement: jest.fn(),
   });
 
   const moduleExports = {
@@ -30,6 +31,7 @@ jest.mock('../../../model/index', () => {
     PanenKebun: createMockModel('PanenKebun'),
     PanenRincianGrade: createMockModel('PanenRincianGrade'),
     Panen: createMockModel('Panen'),
+    DetailPanen: createMockModel('DetailPanen'),
     Hama: createMockModel('Hama'),
     PenggunaanInventaris: createMockModel('PenggunaanInventaris'),
     Inventaris: createMockModel('Inventaris'),
@@ -57,6 +59,7 @@ jest.mock('../../../model/index', () => {
       PanenKebun: createMockModel('PanenKebun'),
       PanenRincianGrade: createMockModel('PanenRincianGrade'),
       Panen: createMockModel('Panen'),
+      DetailPanen: createMockModel('DetailPanen'),
       Hama: createMockModel('Hama'),
       PenggunaanInventaris: createMockModel('PenggunaanInventaris'),
       Inventaris: createMockModel('Inventaris'),
@@ -88,9 +91,11 @@ app.post('/laporan/harian-ternak', laporanController.createLaporanHarianTernak);
 app.post('/laporan/kematian', laporanController.createLaporanKematian);
 app.post('/laporan/vitamin', laporanController.createLaporanVitamin);
 app.post('/laporan/panen', laporanController.createLaporanPanen);
+app.post('/laporan/panen-simple', laporanController.createLaporanPanenSimple);
 app.post('/laporan/panen-kebun', laporanController.createLaporanPanenKebun);
 app.post('/laporan/hama', laporanController.createLaporanHama);
 app.post('/laporan/penggunaan-inventaris', laporanController.createLaporanPenggunaanInventaris);
+app.get('/laporan/ayam-tidak-bertelur', laporanController.getAyamTidakBertelur);
 
 
 describe('Laporan Controller', () => {
@@ -355,6 +360,127 @@ describe('Laporan Controller', () => {
       expect(originalSequelize.Panen.create).not.toHaveBeenCalled();
       expect(mockTransaction.rollback).toHaveBeenCalledTimes(1);
     });
+
+    it('should create DetailPanen records when unitBudidaya.tipe is "individu" and detailPanen array is provided', async () => {
+      const mockLaporanInstance = {
+        id: 'laporanPanen123',
+        ...requestBody,
+        UserId: 'mockUserId123',
+        toJSON: function() { return createPlainVersion(this); },
+      };
+      const mockPanenInstance = {
+        id: 'panen123',
+        LaporanId: 'laporanPanen123',
+        komoditasId: requestBody.panen.komoditasId,
+        jumlah: requestBody.panen.jumlah,
+        berat: requestBody.panen.berat,
+        toJSON: function() { return createPlainVersion(this); },
+      };
+      const mockKomoditasInstance = {
+        id: 'komoditasTelur',
+        jumlah: 0,
+        tipeKomoditas: 'kolektif',
+        hapusObjek: true,
+        panenConfig: eggPanenConfig,
+        save: jest.fn(async function() { return this; }),
+      };
+      const mockUnitBudidayaInstance = {
+        id: 'unitLayerA',
+        jumlah: 1000,
+        tipe: 'individu',
+        save: jest.fn(async function() { return this; }),
+      };
+
+      originalSequelize.Komoditas.findOne.mockResolvedValue(mockKomoditasInstance);
+      originalSequelize.UnitBudidaya.findOne.mockResolvedValue(mockUnitBudidayaInstance);
+      originalSequelize.Laporan.create.mockResolvedValue(mockLaporanInstance);
+      originalSequelize.Panen.create.mockResolvedValue(mockPanenInstance);
+      originalSequelize.PanenRincianGrade.bulkCreate.mockResolvedValue([]);
+      originalSequelize.DetailPanen.create.mockResolvedValue({});
+      originalSequelize.ObjekBudidaya.update.mockResolvedValue([1]);
+
+      const testRequestBody = {
+        ...requestBody,
+        detailPanen: ['ayam-uuid-1', 'ayam-uuid-2'],
+      };
+
+      const res = await request(app).post(endpoint).send(testRequestBody);
+
+      expect(res.statusCode).toBe(201);
+      expect(originalSequelize.DetailPanen.create).toHaveBeenCalledTimes(2);
+      expect(originalSequelize.ObjekBudidaya.update).toHaveBeenCalledTimes(2);
+      expect(originalSequelize.UnitBudidaya.decrement).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('POST /laporan/panen-simple', () => {
+    const endpoint = '/laporan/panen-simple';
+    const requestBody = {
+      judul: 'Laporan Panen Simple',
+      unitBudidayaId: 'unitLayerA',
+      objekBudidayaId: null,
+      tipe: 'panen',
+      panen: {
+        komoditasId: 'komoditasTelur',
+        jumlah: 1000,
+        berat: 60,
+      },
+      detailPanen: ['ayam-uuid-1', 'ayam-uuid-2'],
+    };
+    const eggPanenConfig = {
+      tipePanen: 'telur',
+      modePanen: 'produksi',
+      jumlah: { enabled: true, required: true, label: 'Jumlah panen', satuan: 'butir', integerOnly: true },
+      berat: { enabled: true, required: true, label: 'Berat panen', satuan: 'kilogram', integerOnly: false },
+      jumlahHewan: { enabled: false, required: false, label: 'Jumlah hewan', satuan: 'ekor', integerOnly: true, defaultValue: 0 },
+      grade: { enabled: false },
+    };
+
+    it('should create simple laporan panen and detailPanen records successfully', async () => {
+      const mockLaporanInstance = {
+        id: 'laporanPanen123',
+        ...requestBody,
+        UserId: 'mockUserId123',
+        toJSON: function() { return createPlainVersion(this); },
+      };
+      const mockPanenInstance = {
+        id: 'panen123',
+        LaporanId: 'laporanPanen123',
+        komoditasId: requestBody.panen.komoditasId,
+        jumlah: requestBody.panen.jumlah,
+        berat: requestBody.panen.berat,
+        toJSON: function() { return createPlainVersion(this); },
+      };
+      const mockKomoditasInstance = {
+        id: 'komoditasTelur',
+        jumlah: 0,
+        tipeKomoditas: 'kolektif',
+        hapusObjek: true,
+        panenConfig: eggPanenConfig,
+        save: jest.fn(async function() { return this; }),
+      };
+      const mockUnitBudidayaInstance = {
+        id: 'unitLayerA',
+        jumlah: 1000,
+        tipe: 'individu',
+        save: jest.fn(async function() { return this; }),
+      };
+
+      originalSequelize.Komoditas.findOne.mockResolvedValue(mockKomoditasInstance);
+      originalSequelize.UnitBudidaya.findOne.mockResolvedValue(mockUnitBudidayaInstance);
+      originalSequelize.Laporan.create.mockResolvedValue(mockLaporanInstance);
+      originalSequelize.Panen.create.mockResolvedValue(mockPanenInstance);
+      originalSequelize.DetailPanen.create.mockResolvedValue({});
+      originalSequelize.ObjekBudidaya.update.mockResolvedValue([1]);
+
+      const res = await request(app).post(endpoint).send(requestBody);
+
+      expect(res.statusCode).toBe(201);
+      expect(originalSequelize.DetailPanen.create).toHaveBeenCalledTimes(2);
+      expect(originalSequelize.ObjekBudidaya.update).toHaveBeenCalledTimes(2);
+      expect(originalSequelize.UnitBudidaya.decrement).toHaveBeenCalledTimes(2);
+      expect(mockTransaction.commit).toHaveBeenCalledTimes(1);
+    });
   });
 
 
@@ -483,6 +609,74 @@ describe('Laporan Controller', () => {
         expect(res.statusCode).toBe(404);
         expect(res.body.message).toContain("Inventaris (vitamin) dengan ID invVit123 tidak ditemukan.");
         expect(mockTransaction.rollback).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('GET /laporan/ayam-tidak-bertelur', () => {
+    const endpoint = '/laporan/ayam-tidak-bertelur';
+
+    it('should return 400 if unitBudidayaId is missing', async () => {
+      const res = await request(app).get(endpoint);
+      expect(res.statusCode).toBe(400);
+      expect(res.body.status).toBe(false);
+      expect(res.body.message).toBe("unitBudidayaId wajib diisi");
+    });
+
+    it('should successfully filter chickens that did not lay eggs', async () => {
+      const mockAllAyam = [
+        { id: 'ayam1', namaId: 'A1', isDeleted: false },
+        { id: 'ayam2', namaId: 'A2', isDeleted: false },
+        { id: 'ayam3', namaId: 'A3', isDeleted: false },
+      ];
+
+      const mockDetailPanen = [
+        {
+          id: 'dp1',
+          ObjekBudidayaId: 'ayam1',
+          isDeleted: false,
+          Panen: {
+            id: 'panen1',
+            isDeleted: false,
+            Laporan: {
+              id: 'laporan1',
+              UnitBudidayaId: 'unit1',
+              tipe: 'panen',
+              isDeleted: false,
+            }
+          }
+        }
+      ];
+
+      originalSequelize.ObjekBudidaya.findAll.mockResolvedValue(mockAllAyam);
+      originalSequelize.DetailPanen.findAll.mockResolvedValue(mockDetailPanen);
+
+      const res = await request(app)
+        .get(endpoint)
+        .query({ unitBudidayaId: 'unit1' });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body.status).toBe(true);
+      expect(res.body.data).toHaveLength(2); // ayam2 and ayam3 did not lay eggs
+      expect(res.body.data.map(d => d.id)).toEqual(['ayam2', 'ayam3']);
+      expect(originalSequelize.ObjekBudidaya.findAll).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            UnitBudidayaId: 'unit1',
+            isDeleted: false,
+          }
+        })
+      );
+    });
+
+    it('should return 500 on database error', async () => {
+      originalSequelize.ObjekBudidaya.findAll.mockRejectedValue(new Error('DB error'));
+      const res = await request(app)
+        .get(endpoint)
+        .query({ unitBudidayaId: 'unit1' });
+
+      expect(res.statusCode).toBe(500);
+      expect(res.body.status).toBe(false);
+      expect(res.body.message).toBe('DB error');
     });
   });
 });

@@ -8,5 +8,6 @@ const Gejala = sequelize.Gejala;
 
 router.get("/", GejalaController.getGejalaPenyakit);
 router.post("/", GejalaController.createGejalaPenyakit);
+router.put("/:id", GejalaController.updateGejalaPenyakit);
 
 module.exports = router;
