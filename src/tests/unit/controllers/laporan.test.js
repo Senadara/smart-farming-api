@@ -39,9 +39,11 @@ jest.mock('../../../model/index', () => {
 
     sequelize: {
       transaction: jest.fn(() => defaultMockTransaction),
+      query: jest.fn(),
     },
     Sequelize: {
       Op: ActualOpFromSequelizeLib,
+      QueryTypes: { SELECT: 'SELECT' },
     },
 
     __esModule: true,
@@ -66,9 +68,11 @@ jest.mock('../../../model/index', () => {
       Komoditas: createMockModel('Komoditas'),
       sequelize: {
         transaction: jest.fn(() => defaultMockTransaction),
+        query: jest.fn(),
       },
       Sequelize: {
         Op: ActualOpFromSequelizeLib,
+        QueryTypes: { SELECT: 'SELECT' },
       },
     }
   };
@@ -397,6 +401,10 @@ describe('Laporan Controller', () => {
       originalSequelize.Laporan.create.mockResolvedValue(mockLaporanInstance);
       originalSequelize.Panen.create.mockResolvedValue(mockPanenInstance);
       originalSequelize.PanenRincianGrade.bulkCreate.mockResolvedValue([]);
+      originalSequelize.ObjekBudidaya.findAll.mockResolvedValue([
+        { id: 'ayam-uuid-1' },
+        { id: 'ayam-uuid-2' },
+      ]);
       originalSequelize.DetailPanen.create.mockResolvedValue({});
       originalSequelize.ObjekBudidaya.update.mockResolvedValue([1]);
 
@@ -471,6 +479,10 @@ describe('Laporan Controller', () => {
       originalSequelize.UnitBudidaya.findOne.mockResolvedValue(mockUnitBudidayaInstance);
       originalSequelize.Laporan.create.mockResolvedValue(mockLaporanInstance);
       originalSequelize.Panen.create.mockResolvedValue(mockPanenInstance);
+      originalSequelize.ObjekBudidaya.findAll.mockResolvedValue([
+        { id: 'ayam-uuid-1' },
+        { id: 'ayam-uuid-2' },
+      ]);
       originalSequelize.DetailPanen.create.mockResolvedValue({});
       originalSequelize.ObjekBudidaya.update.mockResolvedValue([1]);
 
@@ -632,24 +644,26 @@ describe('Laporan Controller', () => {
 
       const mockDetailPanen = [
         {
-          id: 'dp1',
-          ObjekBudidayaId: 'ayam1',
-          isDeleted: false,
-          Panen: {
-            id: 'panen1',
-            isDeleted: false,
-            Laporan: {
-              id: 'laporan1',
-              UnitBudidayaId: 'unit1',
-              tipe: 'panen',
-              isDeleted: false,
-            }
-          }
+          objekBudidayaId: 'ayam1',
         }
       ];
 
+      originalSequelize.UnitBudidaya.findOne.mockResolvedValue({
+        id: 'unit1',
+        nama: 'Kandang A',
+        tipe: 'individu',
+        jumlah: 3,
+      });
       originalSequelize.ObjekBudidaya.findAll.mockResolvedValue(mockAllAyam);
-      originalSequelize.DetailPanen.findAll.mockResolvedValue(mockDetailPanen);
+      originalSequelize.sequelize.query
+        .mockResolvedValueOnce(mockDetailPanen)
+        .mockResolvedValueOnce([
+          {
+            tanggal: '2026-07-20',
+            layingChickenCount: 1,
+            totalEggCount: 1,
+          },
+        ]);
 
       const res = await request(app)
         .get(endpoint)
@@ -670,7 +684,7 @@ describe('Laporan Controller', () => {
     });
 
     it('should return 500 on database error', async () => {
-      originalSequelize.ObjekBudidaya.findAll.mockRejectedValue(new Error('DB error'));
+      originalSequelize.UnitBudidaya.findOne.mockRejectedValue(new Error('DB error'));
       const res = await request(app)
         .get(endpoint)
         .query({ unitBudidayaId: 'unit1' });
@@ -698,7 +712,12 @@ describe('Laporan Controller', () => {
     it('should create new laporan sakit tanpa diagnosa successfully', async () => {
       const mockLaporan = { id: 'lap123', ...requestBody };
       const mockSakit = { id: 'sakit123', LaporanId: 'lap123', diagnosisPenyakit: null, status: 'Belum Ditangani' };
-      const mockGejala = { id: 'gej123', nama_gejala: 'Flu Burung Gejala Ringan', gambar: requestBody.gambar };
+      const mockGejala = {
+        id: 'gej123',
+        nama_gejala: 'Flu Burung Gejala Ringan',
+        gambar: requestBody.gambar,
+        destroy: jest.fn(),
+      };
       const mockDaftarGejala = { id: 'dg123', sakitId: 'sakit123', gejalaId: 'gej123', catatan: requestBody.catatan };
 
       originalSequelize.Laporan.create.mockResolvedValue(mockLaporan);

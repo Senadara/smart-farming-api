@@ -18,6 +18,7 @@ const melonRouter = require("./sensor"); // Melon sensor data (formerly sensor)
 const ayamRouter = require("./ayam"); // Ayam sensor data from MQTT
 const gejalaRouter = require("./gejala");
 const penyakitAyamRouter = require("./penyakitAyam");
+const healthIndicationRouter = require("./healthIndication");
 
 const reportRouter = require("./report");
 
@@ -42,5 +43,6 @@ router.use("/gejala", gejalaRouter);
 router.use("/melon", melonRouter); // /api/farm/melon/latest
 router.use("/ayam", ayamRouter);   // /api/farm/ayam/latest, /api/farm/ayam/history
 router.use("/penyakit-ayam", penyakitAyamRouter);
+router.use("/health-indications", healthIndicationRouter);
 
 module.exports = router;

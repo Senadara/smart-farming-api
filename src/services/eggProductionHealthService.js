@@ -14,6 +14,8 @@ const {
   LaporanGejala,
   PenyakitGejala,
   StatusLogPenyakitAyam,
+  HealthIndication,
+  HealthIndicationObject,
   User,
 } = db;
 
@@ -776,6 +778,234 @@ function notificationBody(context) {
   return `${context.unitName}: ${context.nonLayingPercent}% ayam tidak bertelur selama ${context.period.days} hari. Lakukan checklist pemeriksaan kesehatan.`;
 }
 
+function affectedChickensFromContext(context) {
+  const source = Array.isArray(context.indicationChickens) && context.indicationChickens.length > 0
+    ? context.indicationChickens
+    : Array.isArray(context.nonLayingChickens) && context.nonLayingChickens.length > 0
+      ? context.nonLayingChickens
+      : [];
+  const rowMap = new Map(
+    Array.isArray(context.rows)
+      ? context.rows.map((row) => [row.id, row])
+      : []
+  );
+
+  return source
+    .filter((chicken) => chicken?.id)
+    .map((chicken) => {
+      const row = rowMap.get(chicken.id) || {};
+
+      return {
+        id: chicken.id,
+        namaId: chicken.namaId,
+        currentLayingPercent: chicken.currentLayingPercent ?? row.current?.layingPercent ?? null,
+        previousLayingPercent: chicken.previousLayingPercent ?? row.previous?.layingPercent ?? null,
+        currentLayingDays: row.current?.layingDays ?? null,
+        previousLayingDays: row.previous?.layingDays ?? null,
+        dropPercent: chicken.dropPercent ?? row.dropPercent ?? null,
+        dropPoints: chicken.dropPoints ?? row.dropPoints ?? null,
+      };
+    });
+}
+
+async function findExistingHealthIndicationAlert(context) {
+  if (!HealthIndication) {
+    return null;
+  }
+
+  return HealthIndication.findOne({
+    where: {
+      unitBudidayaId: context.unitBudidayaId,
+      indicationCode: context.code || INDICATION_CODE,
+      analysisMode: context.analysisMode || "individual_productivity_drop",
+      periodStart: context.period?.start || null,
+      periodEnd: context.period?.end || null,
+      isDeleted: false,
+      status: {
+        [Op.in]: ["pending", "checked"],
+      },
+    },
+    include: HealthIndicationObject
+      ? [{
+        model: HealthIndicationObject,
+        as: "objects",
+        where: { isDeleted: false },
+        required: false,
+      }]
+      : [],
+    order: [["createdAt", "DESC"]],
+  });
+}
+
+function buildHealthIndicationTitle(context) {
+  if (context.analysisMode === "individual_productivity_drop") {
+    return "Indikasi Penurunan Produktivitas Telur";
+  }
+
+  return "Indikasi Ayam Tidak Bertelur";
+}
+
+function serializeHealthIndicationAlert(indication, objects = []) {
+  if (!indication) {
+    return null;
+  }
+
+  return {
+    id: indication.id,
+    unitBudidayaId: indication.unitBudidayaId,
+    source: indication.source,
+    indicationCode: indication.indicationCode,
+    analysisMode: indication.analysisMode,
+    title: indication.title,
+    message: indication.message,
+    severity: indication.severity,
+    status: indication.status,
+    period: {
+      start: indication.periodStart,
+      end: indication.periodEnd,
+      days: indication.periodDays,
+    },
+    thresholdPercent: indication.thresholdPercent !== null
+      ? Number(indication.thresholdPercent)
+      : null,
+    affectedObjectCount: indication.affectedObjectCount,
+    detectedAt: indication.detectedAt,
+    checkedAt: indication.checkedAt,
+    objects: objects.map((item) => ({
+      id: item.id,
+      objekBudidayaId: item.objekBudidayaId,
+      namaId: item.namaId,
+      dropPercent: item.dropPercent != null ? Number(item.dropPercent) : null,
+      dropPoints: item.dropPoints != null ? Number(item.dropPoints) : null,
+      currentLayingPercent: item.currentLayingPercent != null
+        ? Number(item.currentLayingPercent)
+        : null,
+      previousLayingPercent: item.previousLayingPercent != null
+        ? Number(item.previousLayingPercent)
+        : null,
+      currentLayingDays: item.currentLayingDays,
+      previousLayingDays: item.previousLayingDays,
+      status: item.status,
+    })),
+  };
+}
+
+async function createHealthIndicationAlert(options = {}) {
+  const context = options.context || (
+    options.analysisMode === "individual_productivity_drop"
+      ? await getIndividualEggProductivityContext(options)
+      : await getEggProductionDropContext(options)
+  );
+  const force = options.force === true;
+  const affectedChickens = affectedChickensFromContext(context);
+
+  if ((!context.isIndication || affectedChickens.length === 0) && !force) {
+    return {
+      created: false,
+      skipped: true,
+      reason: "BELOW_THRESHOLD",
+      context,
+    };
+  }
+
+  const existing = await findExistingHealthIndicationAlert(context);
+  if (existing && !force) {
+    return {
+      created: false,
+      skipped: true,
+      reason: "DUPLICATE_PERIOD",
+      context,
+      indication: serializeHealthIndicationAlert(existing, existing.objects || []),
+    };
+  }
+
+  if (!HealthIndication || !HealthIndicationObject) {
+    const error = new Error("Model health indication belum tersedia. Jalankan migration terbaru terlebih dahulu.");
+    error.statusCode = 500;
+    throw error;
+  }
+
+  const transaction = await sequelize.transaction();
+  let indication;
+  let createdObjects = [];
+
+  try {
+    const now = new Date();
+    indication = await HealthIndication.create(
+      {
+        unitBudidayaId: context.unitBudidayaId,
+        source: options.source || "spk-web",
+        indicationCode: context.code || INDICATION_CODE,
+        analysisMode: context.analysisMode || "individual_productivity_drop",
+        title: buildHealthIndicationTitle(context),
+        message: context.message || notificationBody(context),
+        severity: context.status === "critical" ? "critical" : "warning",
+        status: "pending",
+        periodStart: context.period?.start || null,
+        periodEnd: context.period?.end || null,
+        periodDays: context.period?.days || null,
+        thresholdPercent: context.thresholdPercent ?? null,
+        affectedObjectCount: affectedChickens.length,
+        context,
+        detectedAt: now,
+      },
+      { transaction }
+    );
+
+    createdObjects = await HealthIndicationObject.bulkCreate(
+      affectedChickens.map((chicken) => ({
+        healthIndicationId: indication.id,
+        objekBudidayaId: chicken.id,
+        namaId: chicken.namaId,
+        dropPercent: chicken.dropPercent,
+        dropPoints: chicken.dropPoints,
+        currentLayingPercent: chicken.currentLayingPercent,
+        previousLayingPercent: chicken.previousLayingPercent,
+        currentLayingDays: chicken.currentLayingDays,
+        previousLayingDays: chicken.previousLayingDays,
+        status: "pending",
+      })),
+      { transaction }
+    );
+
+    await transaction.commit();
+  } catch (error) {
+    await transaction.rollback();
+    throw error;
+  }
+
+  let notification = null;
+  if (options.notify !== false) {
+    notification = await sendNotificationToTarget(
+      { role: options.targetRole || "petugas" },
+      "Indikasi Kesehatan Ayam",
+      notificationBody(context),
+      {
+        type: "HEALTH_INDICATION",
+        action: "OPEN_HEALTH_CHECKLIST",
+        source: options.source || "spk-web",
+        indicationId: indication.id,
+        indicationCode: context.code || INDICATION_CODE,
+        analysisMode: context.analysisMode || "individual_productivity_drop",
+        unitBudidayaId: context.unitBudidayaId,
+        affectedObjectCount: affectedChickens.length,
+        affectedObjectIds: affectedChickens.map((chicken) => chicken.id).slice(0, 20).join(","),
+        severity: "warning",
+      }
+    );
+
+    await indication.update({ notificationResult: notification });
+  }
+
+  return {
+    created: true,
+    skipped: false,
+    context,
+    indication: serializeHealthIndicationAlert(indication, createdObjects),
+    notification,
+  };
+}
+
 async function createAutomaticHealthIndication(options = {}) {
   const context = options.context || (
     options.analysisMode === "individual_productivity_drop"
@@ -857,7 +1087,7 @@ async function createAutomaticHealthIndication(options = {}) {
         {
           LaporanId: laporan.id,
           diagnosisPenyakit: disease.id,
-          status: "Belum ditangani",
+          status: "Belum Ditangani",
         },
         { transaction }
       );
@@ -875,7 +1105,7 @@ async function createAutomaticHealthIndication(options = {}) {
         await StatusLogPenyakitAyam.create(
           {
             laporan_sakit_id: sakit.id,
-            status: "Belum ditangani",
+            status: "Belum Ditangani",
             catatan: "Dibuat otomatis dari indikasi penurunan produksi telur.",
             updated_by: userId,
           },
@@ -952,5 +1182,6 @@ module.exports = {
   INDIVIDUAL_PRODUCTIVITY_DROP_SYMPTOM,
   getEggProductionDropContext,
   getIndividualEggProductivityContext,
+  createHealthIndicationAlert,
   createAutomaticHealthIndication,
 };

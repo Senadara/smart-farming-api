@@ -6,6 +6,7 @@ const {
 const {
   getEggProductionDropContext,
   getIndividualEggProductivityContext,
+  createHealthIndicationAlert,
   createAutomaticHealthIndication,
 } = require("../services/eggProductionHealthService");
 const {
@@ -183,6 +184,36 @@ router.post("/spk/health-indications", validateInternalToken, async (req, res) =
       sortBy: req.body.sortBy,
       direction: req.body.direction,
       userId: req.body.userId,
+      source: req.body.source || "laravel-spk",
+      notify: req.body.notify !== false,
+      targetRole: req.body.targetRole || "petugas",
+      force: req.body.force === true,
+    });
+
+    return res.status(result.created ? 201 : 200).json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+});
+
+router.post("/spk/health-indication-alerts", validateInternalToken, async (req, res) => {
+  try {
+    const result = await createHealthIndicationAlert({
+      unitBudidayaId: req.body.unitBudidayaId,
+      days: req.body.days,
+      thresholdPercent: req.body.thresholdPercent,
+      startDate: req.body.startDate,
+      endDate: req.body.endDate,
+      analysisMode: req.body.analysisMode,
+      sort: req.body.sort,
+      sortBy: req.body.sortBy,
+      direction: req.body.direction,
       source: req.body.source || "laravel-spk",
       notify: req.body.notify !== false,
       targetRole: req.body.targetRole || "petugas",

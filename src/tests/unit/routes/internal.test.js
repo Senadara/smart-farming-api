@@ -9,6 +9,7 @@ jest.mock("../../../../services/notificationService", () => ({
 jest.mock("../../../services/eggProductionHealthService", () => ({
   getEggProductionDropContext: jest.fn(),
   getIndividualEggProductivityContext: jest.fn(),
+  createHealthIndicationAlert: jest.fn(),
   createAutomaticHealthIndication: jest.fn(),
 }));
 
@@ -24,6 +25,7 @@ const {
 const {
   getEggProductionDropContext,
   getIndividualEggProductivityContext,
+  createHealthIndicationAlert,
   createAutomaticHealthIndication,
 } = require("../../../services/eggProductionHealthService");
 const {
@@ -271,6 +273,46 @@ describe("Internal notification routes", () => {
       direction: undefined,
       userId: "user-1",
       source: "laravel-spk",
+      notify: true,
+      targetRole: "petugas",
+      force: false,
+    });
+  });
+
+  it("creates a health indication alert from Laravel without touching report endpoints", async () => {
+    createHealthIndicationAlert.mockResolvedValue({
+      created: true,
+      indication: {
+        id: "indication-1",
+        affectedObjectCount: 2,
+      },
+    });
+
+    const response = await request(app)
+      .post("/internal/spk/health-indication-alerts")
+      .set("X-Internal-Token", "internal-secret")
+      .send({
+        unitBudidayaId: "unit-1",
+        days: 7,
+        thresholdPercent: 40,
+        analysisMode: "individual_productivity_drop",
+        source: "laravel-spk-individual-productivity",
+        targetRole: "petugas",
+      });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.body.success).toBe(true);
+    expect(createHealthIndicationAlert).toHaveBeenCalledWith({
+      unitBudidayaId: "unit-1",
+      days: 7,
+      thresholdPercent: 40,
+      startDate: undefined,
+      endDate: undefined,
+      analysisMode: "individual_productivity_drop",
+      sort: undefined,
+      sortBy: undefined,
+      direction: undefined,
+      source: "laravel-spk-individual-productivity",
       notify: true,
       targetRole: "petugas",
       force: false,

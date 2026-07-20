@@ -1,7 +1,7 @@
 const moment = require("moment");
 const db = require("../src/model/index");
 const {
-  createAutomaticHealthIndication,
+  createHealthIndicationAlert,
 } = require("../src/services/eggProductionHealthService");
 const { sendNotificationToTarget } = require("./notificationService");
 
@@ -245,10 +245,12 @@ async function sendDuplicateReminderNotification(result, setting, options = {}) 
   return sendNotificationToTarget(
     { role: setting.targetRole },
     "Indikasi Kesehatan Ayam",
-    `${context.unitName}: ${indicationCount} ayam masih memiliki indikasi penurunan HDP. Laporan periode ini sudah ada, lanjutkan pemantauan/checklist.`,
+    `${context.unitName}: ${indicationCount} ayam masih memiliki indikasi penurunan HDP. Buka daftar indikasi untuk menjalankan checklist.`,
     {
       type: "HEALTH_INDICATION",
+      action: "OPEN_HEALTH_CHECKLIST",
       source: options.source || "laravel-health-scheduler-manual-reminder",
+      indicationId: result?.indication?.id || null,
       indicationCode: context.code,
       analysisMode: context.analysisMode || "individual_productivity_drop",
       unitBudidayaId: context.unitBudidayaId,
@@ -291,6 +293,7 @@ async function runHealthIndicationScheduler(options = {}) {
     finishedAt: null,
     processedUnitCount: 0,
     createdReportCount: 0,
+    createdIndicationCount: 0,
     affectedObjectCount: 0,
     reminderNotificationCount: 0,
     skippedCount: 0,
@@ -304,7 +307,7 @@ async function runHealthIndicationScheduler(options = {}) {
 
     for (const unit of units) {
       try {
-        const result = await createAutomaticHealthIndication({
+        const result = await createHealthIndicationAlert({
           unitBudidayaId: unit.id,
           days: setting.days,
           thresholdPercent: setting.thresholdPercent,
@@ -316,11 +319,12 @@ async function runHealthIndicationScheduler(options = {}) {
           targetRole: setting.targetRole,
         });
 
-        const affectedCount = Number(result?.report?.affectedObjectCount || 0);
+        const affectedCount = Number(result?.indication?.affectedObjectCount || 0);
         const created = result?.created === true;
 
         if (created) {
-          summary.createdReportCount += Number(result?.report?.laporanIds?.length || 1);
+          summary.createdIndicationCount += 1;
+          summary.createdReportCount += 1;
           summary.affectedObjectCount += affectedCount;
         } else {
           summary.skippedCount += 1;
@@ -346,6 +350,7 @@ async function runHealthIndicationScheduler(options = {}) {
           unitName: unit.nama,
           created,
           reason: result?.reason || null,
+          indicationId: result?.indication?.id || null,
           affectedObjectCount: affectedCount,
           indicationChickenCount: result?.context?.indicationChickenCount || 0,
           reminderNotificationSent: Boolean(reminderNotification?.success),
@@ -387,7 +392,7 @@ async function checkHealthIndicationScheduler() {
 
     if (result.ran) {
       console.log(
-        `[HEALTH-SPK][${moment().format("HH:mm")}] Scheduler processed ${result.summary.processedUnitCount} individual units, created ${result.summary.createdReportCount} reports.`
+        `[HEALTH-SPK][${moment().format("HH:mm")}] Scheduler processed ${result.summary.processedUnitCount} individual units, created ${result.summary.createdIndicationCount || result.summary.createdReportCount} indications.`
       );
     }
 
