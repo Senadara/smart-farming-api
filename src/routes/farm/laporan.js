@@ -122,6 +122,11 @@ router.get(
 );
 
 router.get(
+  "/ayam-penurunan-produktivitas",
+  laporanController.getAyamPenurunanProduktivitas
+);
+
+router.get(
   "/riwayat-penyakit-ayam/unit/:id", 
   penyakitAyamController.getRiwayatPenyakitAyam
 );

@@ -262,7 +262,8 @@ const diagnosaPenyakitAyam = async (req, res) => {
         const hasil = await cfHelper.diagnosePenyakit(gejala)
 
         // Penanganan berdasarkan penyakit hasil diagnosa
-        const penanganan = hasil?.id
+        // Jika isTie bernilai true (terdapat cfScore sama semua/imbang), maka JANGAN tampilkan penanganan per penyakit
+        const penanganan = (hasil?.id && !hasil?.isTie)
             ? await PenangananPenyakitAyam.findAll({
                 where: { penyakit_id: hasil.id },
             })
