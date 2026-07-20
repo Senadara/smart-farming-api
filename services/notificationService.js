@@ -68,6 +68,57 @@ function notificationUnavailableResult() {
   };
 }
 
+function validFcmTokenCondition() {
+  return {
+    [Op.not]: null,
+    [Op.ne]: "",
+  };
+}
+
+function targetRoleWhere(targetRole) {
+  return targetRole !== "all" ? { role: targetRole } : {};
+}
+
+function targetTokenWhere(targetRole) {
+  return {
+    ...targetRoleWhere(targetRole),
+    fcmToken: validFcmTokenCondition(),
+  };
+}
+
+async function countUsersSafely(where) {
+  if (typeof User.count !== "function") {
+    return null;
+  }
+
+  try {
+    return await User.count({ where });
+  } catch (error) {
+    console.error("Failed to count users for notification diagnostics:", error);
+    return null;
+  }
+}
+
+async function noValidFcmTokenResult(targetRole) {
+  const [targetUserCount, usersWithTokenCount] = await Promise.all([
+    countUsersSafely(targetRoleWhere(targetRole)),
+    countUsersSafely(targetTokenWhere(targetRole)),
+  ]);
+
+  return {
+    success: false,
+    successCount: 0,
+    failureCount: 0,
+    totalCount: 0,
+    targetRole,
+    targetUserCount,
+    usersWithTokenCount,
+    error: "No users with valid FCM token",
+    remediation:
+      "Pastikan aplikasi mobile mengirim fcmToken ke PUT /api/auth/fcmToken setelah login, saat aplikasi dibuka, dan saat Firebase me-refresh token.",
+  };
+}
+
 async function sendNotificationToUser(
   targetRole,
   title,
@@ -84,23 +135,12 @@ async function sendNotificationToUser(
   try {
     if (targetRole != "all") {
       usersWithToken = await User.findAll({
-        where: {
-          role: targetRole,
-          fcmToken: {
-            [Op.not]: null,
-            [Op.ne]: "",
-          },
-        },
+        where: targetTokenWhere(targetRole),
         attributes: ["fcmToken"],
       });
     } else {
       usersWithToken = await User.findAll({
-        where: {
-          fcmToken: {
-            [Op.not]: null,
-            [Op.ne]: "",
-          },
-        },
+        where: targetTokenWhere(targetRole),
         attributes: ["fcmToken"],
       });
     }
@@ -113,14 +153,7 @@ async function sendNotificationToUser(
       console.log(
         `No users found with role "${targetRole}" and valid FCM tokens. Notification for "${title}" not sent.`
       );
-      return {
-        success: false,
-        successCount: 0,
-        failureCount: 0,
-        totalCount: 0,
-        targetRole,
-        error: "No users with valid FCM token",
-      };
+      return noValidFcmTokenResult(targetRole);
     }
 
     const message = {
@@ -186,10 +219,7 @@ async function sendNotificationToSingleUserById(userId, title, body, dataPayload
     const user = await User.findOne({
       where: {
         id: userId,
-        fcmToken: { 
-          [Op.not]: null,
-          [Op.ne]: "",
-        },
+        fcmToken: validFcmTokenCondition(),
       },
       attributes: ["fcmToken"],
     });
@@ -198,7 +228,12 @@ async function sendNotificationToSingleUserById(userId, title, body, dataPayload
       console.log(
         `User with ID "${userId}" not found or has no valid FCM token. Notification for "${title}" not sent.`
       );
-      return { success: false, error: "User not found or no FCM token" };
+      return {
+        success: false,
+        error: "User not found or no FCM token",
+        remediation:
+          "Pastikan aplikasi mobile mengirim fcmToken ke PUT /api/auth/fcmToken untuk user ini.",
+      };
     }
 
     token = user.fcmToken;

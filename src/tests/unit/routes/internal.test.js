@@ -6,10 +6,30 @@ jest.mock("../../../../services/notificationService", () => ({
   sendNotificationToTarget: jest.fn(),
 }));
 
+jest.mock("../../../services/eggProductionHealthService", () => ({
+  getEggProductionDropContext: jest.fn(),
+  getIndividualEggProductivityContext: jest.fn(),
+  createAutomaticHealthIndication: jest.fn(),
+}));
+
+jest.mock("../../../../services/healthIndicationSchedulerService", () => ({
+  readHealthSchedulerSetting: jest.fn(),
+  runHealthIndicationScheduler: jest.fn(),
+}));
+
 const {
   sendNotificationToSingleUserById,
   sendNotificationToTarget,
 } = require("../../../../services/notificationService");
+const {
+  getEggProductionDropContext,
+  getIndividualEggProductivityContext,
+  createAutomaticHealthIndication,
+} = require("../../../services/eggProductionHealthService");
+const {
+  readHealthSchedulerSetting,
+  runHealthIndicationScheduler,
+} = require("../../../../services/healthIndicationSchedulerService");
 const internalRouter = require("../../../routes/internal");
 
 const app = express();
@@ -143,5 +163,160 @@ describe("Internal notification routes", () => {
         action: "OPEN_BACKOFFICE_URL",
       }
     );
+  });
+
+  it("returns egg production drop context for Laravel", async () => {
+    getEggProductionDropContext.mockResolvedValue({
+      unitBudidayaId: "unit-1",
+      nonLayingPercent: 40,
+      isIndication: true,
+    });
+
+    const response = await request(app)
+      .get("/internal/spk/egg-production-drop")
+      .query({
+        unitBudidayaId: "unit-1",
+        days: "7",
+        thresholdPercent: "40",
+      })
+      .set("X-Internal-Token", "internal-secret");
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(response.body.data).toEqual({
+      unitBudidayaId: "unit-1",
+      nonLayingPercent: 40,
+      isIndication: true,
+    });
+    expect(getEggProductionDropContext).toHaveBeenCalledWith({
+      unitBudidayaId: "unit-1",
+      days: "7",
+      thresholdPercent: "40",
+      startDate: undefined,
+      endDate: undefined,
+    });
+  });
+
+  it("returns individual egg productivity context for Laravel", async () => {
+    getIndividualEggProductivityContext.mockResolvedValue({
+      unitBudidayaId: "unit-1",
+      activeChickenCount: 10,
+      indicationChickenCount: 4,
+      rows: [],
+    });
+
+    const response = await request(app)
+      .get("/internal/spk/individual-egg-productivity")
+      .query({
+        unitBudidayaId: "unit-1",
+        days: "7",
+        thresholdPercent: "40",
+        sort: "drop",
+        direction: "desc",
+      })
+      .set("X-Internal-Token", "internal-secret");
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(response.body.data).toEqual({
+      unitBudidayaId: "unit-1",
+      activeChickenCount: 10,
+      indicationChickenCount: 4,
+      rows: [],
+    });
+    expect(getIndividualEggProductivityContext).toHaveBeenCalledWith({
+      unitBudidayaId: "unit-1",
+      days: "7",
+      thresholdPercent: "40",
+      startDate: undefined,
+      endDate: undefined,
+      sort: "drop",
+      sortBy: undefined,
+      direction: "desc",
+    });
+  });
+
+  it("creates an automatic health indication report from Laravel", async () => {
+    createAutomaticHealthIndication.mockResolvedValue({
+      created: true,
+      report: {
+        laporanId: "laporan-1",
+        sakitId: "sakit-1",
+      },
+    });
+
+    const response = await request(app)
+      .post("/internal/spk/health-indications")
+      .set("X-Internal-Token", "internal-secret")
+      .send({
+        unitBudidayaId: "unit-1",
+        days: 7,
+        thresholdPercent: 40,
+        userId: "user-1",
+        source: "laravel-spk",
+        targetRole: "petugas",
+      });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.body.success).toBe(true);
+    expect(createAutomaticHealthIndication).toHaveBeenCalledWith({
+      unitBudidayaId: "unit-1",
+      days: 7,
+      thresholdPercent: 40,
+      startDate: undefined,
+      endDate: undefined,
+      analysisMode: undefined,
+      sort: undefined,
+      sortBy: undefined,
+      direction: undefined,
+      userId: "user-1",
+      source: "laravel-spk",
+      notify: true,
+      targetRole: "petugas",
+      force: false,
+    });
+  });
+
+  it("returns health scheduler status for Laravel", async () => {
+    readHealthSchedulerSetting.mockResolvedValue({
+      isEnabled: true,
+      scheduleTimes: ["07:00", "12:30"],
+      days: 7,
+      thresholdPercent: 40,
+      targetRole: "petugas",
+    });
+
+    const response = await request(app)
+      .get("/internal/spk/health-scheduler")
+      .set("X-Internal-Token", "internal-secret");
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(response.body.data.scheduleTimes).toEqual(["07:00", "12:30"]);
+    expect(readHealthSchedulerSetting).toHaveBeenCalled();
+  });
+
+  it("runs the health scheduler manually for Laravel", async () => {
+    runHealthIndicationScheduler.mockResolvedValue({
+      ran: true,
+      summary: {
+        processedUnitCount: 2,
+        createdReportCount: 4,
+        affectedObjectCount: 4,
+      },
+    });
+
+    const response = await request(app)
+      .post("/internal/spk/health-scheduler/run")
+      .set("X-Internal-Token", "internal-secret")
+      .send({ source: "laravel-health-scheduler-manual" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(response.body.data.summary.createdReportCount).toBe(4);
+    expect(runHealthIndicationScheduler).toHaveBeenCalledWith({
+      manual: true,
+      source: "laravel-health-scheduler-manual",
+    });
   });
 });
