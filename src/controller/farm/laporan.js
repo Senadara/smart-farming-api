@@ -46,6 +46,9 @@ const {
   attachPanenConfig,
   normalizePanenConfig,
 } = require("../../utils/panenConfigUtils");
+const {
+  getEggProductionDropContext,
+} = require("../../services/eggProductionHealthService");
 
 const hasNumericValue = (value) =>
   value !== undefined && value !== null && value !== "";
@@ -60,6 +63,38 @@ const parseOptionalNumber = (value) => {
 
 const percentageOf = (value, total) =>
   value === null || total <= 0 ? null : Number(((value / total) * 100).toFixed(2));
+
+const uniqueIds = (ids = []) => [...new Set(ids.filter(Boolean))];
+
+const validateDetailPanenIds = async (unitBudidayaId, detailPanenIds, transaction) => {
+  const ids = uniqueIds(detailPanenIds);
+
+  if (ids.length === 0) {
+    return { ids, message: null };
+  }
+
+  const validObjects = await ObjekBudidaya.findAll({
+    where: {
+      id: ids,
+      UnitBudidayaId: unitBudidayaId,
+      isDeleted: false,
+    },
+    attributes: ["id"],
+    transaction,
+  });
+
+  const validIds = new Set(validObjects.map((item) => item.id));
+  const invalidIds = ids.filter((id) => !validIds.has(id));
+
+  if (invalidIds.length > 0) {
+    return {
+      ids,
+      message: `detailPanen berisi ayam yang tidak valid atau bukan milik kandang ini: ${invalidIds.join(", ")}`,
+    };
+  }
+
+  return { ids, message: null };
+};
 
 const buildPositiveNumberMessage = (fieldConfig, fallbackLabel, fallbackSatuan) => {
   const label = fieldConfig.label || fallbackLabel;
@@ -436,6 +471,83 @@ const createLaporanSakit = async (req, res) => {
   } catch (error) {
     await t.rollback();
     res.status(500).json({
+      message: error.message,
+      detail: error,
+    });
+  }
+};
+
+const createLaporanSakitTanpaDiagnosa = async (req, res) => {
+  const t = await db.transaction();
+
+  try {
+    const { sakit, ...laporanData } = req.body;
+
+    if (!sakit || !sakit.penyakit) {
+      await t.rollback();
+      return res.status(400).json({
+        status: false,
+        message: "sakit.penyakit wajib diisi",
+      });
+    }
+
+    const data = await Laporan.create(
+      {
+        ...laporanData,
+        UnitBudidayaId: req.body.unitBudidayaId,
+        ObjekBudidayaId: req.body.objekBudidayaId,
+        UserId: req.user.id,
+      },
+      { transaction: t }
+    );
+
+    const laporanSakit = await Sakit.create(
+      {
+        LaporanId: data.id,
+        diagnosisPenyakit: null,
+        status: "Belum Ditangani",
+      },
+      { transaction: t, validate: false }
+    );
+
+    const gejala = await Gejala.create(
+      {
+        nama_gejala: sakit.penyakit,
+        gambar: req.body.gambar || "-",
+      },
+      { transaction: t }
+    );
+
+    const daftarGejala = await DaftarGejala.create(
+      {
+        sakitId: laporanSakit.id,
+        gejalaId: gejala.id,
+        catatan: req.body.catatan || "",
+      },
+      { transaction: t }
+    );
+
+    // Lakukan soft-delete pada gejala yang baru dibuat agar tidak muncul
+    // di master list gejala (getGejalaPenyakit), namun karena database
+    // disetting paranoid: true, datanya tetap tersimpan dan bisa direferensikan.
+    await gejala.destroy({ transaction: t });
+
+    await t.commit();
+
+    return res.status(201).json({
+      status: true,
+      message: "Successfully created new laporan sakit tanpa diagnosa",
+      data: {
+        data,
+        laporanSakit,
+        gejala,
+        daftarGejala,
+      },
+    });
+  } catch (error) {
+    await t.rollback();
+    return res.status(500).json({
+      status: false,
       message: error.message,
       detail: error,
     });
@@ -895,6 +1007,19 @@ const createLaporanPanen = async (req, res) => {
       });
     }
 
+    const detailValidation = await validateDetailPanenIds(
+      req.body.unitBudidayaId,
+      detailPanenIds,
+      t
+    );
+
+    if (detailValidation.message) {
+      await t.rollback();
+      return res.status(400).json({ message: detailValidation.message });
+    }
+
+    const validDetailPanenIds = detailValidation.ids;
+
     const currentPopulation = Number(unitBudidaya.jumlah ?? 0);
     if (jumlahHewan > currentPopulation) {
       await t.rollback();
@@ -959,8 +1084,8 @@ const createLaporanPanen = async (req, res) => {
       );
     }
 
-    if (unitBudidaya.tipe === "individu" && detailPanenIds.length > 0) {
-      for (const item of detailPanenIds) {
+    if (unitBudidaya.tipe === "individu" && validDetailPanenIds.length > 0) {
+      for (const item of validDetailPanenIds) {
         await DetailPanen.create(
           {
             PanenId: laporanPanen.id,
@@ -1171,6 +1296,19 @@ const createLaporanPanenSimple = async (req, res) => {
       });
     }
 
+    const detailValidation = await validateDetailPanenIds(
+      req.body.unitBudidayaId,
+      detailPanenIds,
+      t
+    );
+
+    if (detailValidation.message) {
+      await t.rollback();
+      return res.status(400).json({ message: detailValidation.message });
+    }
+
+    const validDetailPanenIds = detailValidation.ids;
+
     const currentPopulation = Number(unitBudidaya.jumlah ?? 0);
     if (jumlahHewan > currentPopulation) {
       await t.rollback();
@@ -1186,18 +1324,21 @@ const createLaporanPanenSimple = async (req, res) => {
       })
       : null;
 
-    const data = await Laporan.create(
-      {
-        judul: req.body.judul || `Laporan Panen - ${komoditas.nama}`,
-        tipe: "panen",
-        UnitBudidayaId: req.body.unitBudidayaId,
-        ObjekBudidayaId: req.body.objekBudidayaId,
-        UserId: req.user.id,
-        gambar: null,
-        catatan: null,
-      },
-      { transaction: t }
-    );
+    const laporanPayload = {
+      judul: req.body.judul || `Laporan Panen - ${komoditas.nama}`,
+      tipe: "panen",
+      UnitBudidayaId: req.body.unitBudidayaId,
+      ObjekBudidayaId: req.body.objekBudidayaId,
+      UserId: req.user.id,
+      gambar: null,
+      catatan: null,
+    };
+
+    if (req.body.createdAt) {
+      laporanPayload.createdAt = req.body.createdAt;
+    }
+
+    const data = await Laporan.create(laporanPayload, { transaction: t });
 
     const laporanPanen = await Panen.create(
       {
@@ -1223,8 +1364,8 @@ const createLaporanPanenSimple = async (req, res) => {
       );
     }
 
-    if (unitBudidaya.tipe === "individu" && detailPanenIds.length > 0) {
-      for (const item of detailPanenIds) {
+    if (unitBudidaya.tipe === "individu" && validDetailPanenIds.length > 0) {
+      for (const item of validDetailPanenIds) {
         await DetailPanen.create(
           {
             PanenId: laporanPanen.id,
@@ -2839,7 +2980,7 @@ const getHasilPanenTernakWithGrades = async (req, res) => {
 
 const getAyamTidakBertelur = async (req, res) => {
   try {
-    const { unitBudidayaId } = req.query;
+    const { unitBudidayaId, days, thresholdPercent, startDate, endDate } = req.query;
 
     if (!unitBudidayaId) {
       return res.status(400).json({
@@ -2848,24 +2989,93 @@ const getAyamTidakBertelur = async (req, res) => {
       });
     }
 
-    let start = req.query.startDate ? new Date(req.query.startDate) : new Date();
-    if (!req.query.startDate) {
-      start.setHours(0, 0, 0, 0);
-    }
-    let end = req.query.endDate ? new Date(req.query.endDate) : new Date();
-    if (!req.query.endDate) {
-      end.setHours(23, 59, 59, 999);
+    const context = await getEggProductionDropContext({
+      unitBudidayaId,
+      days,
+      thresholdPercent,
+      startDate,
+      endDate,
+    });
+
+    return res.status(200).json({
+      status: true,
+      message: "Successfully retrieved chickens that did not lay eggs",
+      data: context.nonLayingChickens,
+      summary: {
+        code: context.code,
+        unitBudidayaId: context.unitBudidayaId,
+        unitName: context.unitName,
+        unitType: context.unitType,
+        isIndividualHarvestReady: context.isIndividualHarvestReady,
+        period: context.period,
+        thresholdPercent: context.thresholdPercent,
+        activeChickenCount: context.activeChickenCount,
+        layingChickenCount: context.layingChickenCount,
+        nonLayingChickenCount: context.nonLayingChickenCount,
+        nonLayingPercent: context.nonLayingPercent,
+        isIndication: context.isIndication,
+        status: context.status,
+        message: context.message,
+        daily: context.daily,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      status: false,
+      message: error.message,
+      detail: error,
+    });
+  }
+};
+
+const getAyamPenurunanProduktivitas = async (req, res) => {
+  try {
+    const { unitBudidayaId } = req.query;
+    const limitLaporan = parseInt(req.query.laporanCount) || 2;
+
+    if (!unitBudidayaId) {
+      return res.status(400).json({
+        status: false,
+        message: "unitBudidayaId wajib diisi",
+      });
     }
 
-    // 1. Ambil semua objek budidaya (ayam) aktif di unit budidaya ini
     const allAyam = await ObjekBudidaya.findAll({
       where: {
         UnitBudidayaId: unitBudidayaId,
         isDeleted: false,
       },
+      include: [
+        {
+          model: UnitBudidaya,
+          attributes: ['gambar']
+        }
+      ]
     });
 
-    // 2. Ambil detail panen (telur) yang terhubung ke laporan panen di unit ini dalam rentang tanggal
+    // Cari Laporan terakhir
+    const lastLaporanPanen = await Laporan.findAll({
+      where: {
+        UnitBudidayaId: unitBudidayaId,
+        tipe: 'panen',
+        isDeleted: false,
+      },
+      order: [['createdAt', 'DESC']],
+      limit: limitLaporan,
+      attributes: ['id']
+    });
+
+    if (lastLaporanPanen.length === 0) {
+      return res.status(200).json({
+        status: true,
+        message: "Belum ada data laporan panen",
+        data: [],
+      });
+    }
+
+    const laporanIds = lastLaporanPanen.map(l => l.id);
+
+    // Ambil detail panen hanya untuk Laporan-laporan terakhir tersebut
     const detailPanenList = await DetailPanen.findAll({
       where: {
         isDeleted: false,
@@ -2876,39 +3086,67 @@ const getAyamTidakBertelur = async (req, res) => {
           required: true,
           where: {
             isDeleted: false,
-          },
-          include: [
-            {
-              model: Laporan,
-              required: true,
-              where: {
-                UnitBudidayaId: unitBudidayaId,
-                tipe: "panen",
-                createdAt: {
-                  [Op.between]: [start, end],
-                },
-                isDeleted: false,
-              },
-            },
-          ],
+            LaporanId: {
+              [Op.in]: laporanIds
+            }
+          }
         },
       ],
     });
 
-    // 3. Catat ID ayam yang bertelur (ada di detail panen)
-    const ayamBertelurIds = new Set(
-      detailPanenList.map((dp) => dp.ObjekBudidayaId)
-    );
+    // Hitung berapa kali tiap ayam panen di N laporan terakhir
+    const panenCountMap = new Map();
+    for (const dp of detailPanenList) {
+      const objId = dp.ObjekBudidayaId;
+      panenCountMap.set(objId, (panenCountMap.get(objId) || 0) + 1);
+    }
 
-    // 4. Saring ayam yang tidak bertelur (tidak ada di detail panen)
-    const ayamTidakBertelur = allAyam.filter(
-      (ayam) => !ayamBertelurIds.has(ayam.id)
-    );
+    // 4. Saring ayam yang jumlah panennya = 0 (absen di semua N laporan panen terakhir)
+    let ayamPenurunanProduktivitas = allAyam
+      .filter((ayam) => {
+        const panenCount = panenCountMap.get(ayam.id) || 0;
+        return panenCount === 0;
+      })
+      .map((ayam) => {
+        const ayamJson = ayam.toJSON();
+        ayamJson.gambarUnit = ayam.UnitBudidaya ? ayam.UnitBudidaya.gambar : null;
+        return ayamJson;
+      });
+
+    //Mencari Laporan Ayam Sakit
+    laporanSakitAktif = await Laporan.findAll({
+      where: {
+        objekBudidayaId: {
+          [Op.in]: ayamPenurunanProduktivitas.map(a => a.id)
+        },
+        tipe: 'sakit',
+        isDeleted: false,
+        [Op.or]: [
+          {
+            objekBudidayaId: {
+              // 1. Ayam yang sakit tapi tidak masuk list
+              [Op.in]: ayamPenurunanProduktivitas.map(a => a.id)
+            }
+          },
+          {
+            ObjekBudidayaId: null // 2. Ayam sakit massal
+          }
+        ]
+      },
+      include: [
+        {
+          model: Sakit,
+          required: true,
+        }
+      ]
+    });
+
+
 
     return res.status(200).json({
       status: true,
-      message: "Successfully retrieved chickens that did not lay eggs",
-      data: ayamTidakBertelur,
+      message: "Berhasil mengambil data ayam dengan penurunan produktivitas",
+      data: ayamPenurunanProduktivitas,
     });
   } catch (error) {
     return res.status(500).json({
@@ -2924,6 +3162,7 @@ module.exports = {
   getLastHarianKebunByObjekBudidayaId,
   createLaporanHarianTernak,
   createLaporanSakit,
+  createLaporanSakitTanpaDiagnosa,
   createLaporanKematian,
   createLaporanVitamin,
   createLaporanPanen,
@@ -2945,4 +3184,5 @@ module.exports = {
   getHasilPanenTernakWithGrades,
   getGradeSummaryByKomoditas,
   getAyamTidakBertelur,
+  getAyamPenurunanProduktivitas,
 };

@@ -5,6 +5,7 @@ const gejalaPenyakitController = require("../../controller/farm/gejalaPenyakit")
 
 router.get("/", penyakitAyamController.getAllPenyakit);
 router.get("/with-gejala", penyakitAyamController.getPenyakitWithGejala);
+router.get("/bobot-gejala", penyakitAyamController.getBobotGejalaTiapPenyakit);
 router.get("/with-penanganan", penyakitAyamController.getPenyakitWithPenanganan);
 
 router.post("/diagnosa", penyakitAyamController.diagnosaPenyakitAyam)

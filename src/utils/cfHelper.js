@@ -101,7 +101,17 @@ const diagnosePenyakit = async (gejalaInput) => {
         return b.jumlah_gejala_cocok - a.jumlah_gejala_cocok;
     });
 
-    return hasil.length > 0 ? hasil[0] : null;
+    if (hasil.length === 0) return null;
+
+    const utama = hasil[0];
+    
+    // Tambahkan list penyakit lain sebagai alternatif diagnosa (hanya yang skornya > 0)
+    utama.penyakitLain = hasil.slice(1).filter(p => p.cf_score > 0);
+    
+    // Tandai jika ada penyakit lain yang memiliki cf_score SAMA PERSIS dengan penyakit utama
+    utama.isTie = utama.penyakitLain.length > 0 && utama.penyakitLain[0].cf_score === utama.cf_score;
+
+    return utama;
 };
 
 module.exports = { 
