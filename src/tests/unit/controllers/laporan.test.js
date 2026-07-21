@@ -96,6 +96,7 @@ app.post('/laporan/panen-kebun', laporanController.createLaporanPanenKebun);
 app.post('/laporan/hama', laporanController.createLaporanHama);
 app.post('/laporan/penggunaan-inventaris', laporanController.createLaporanPenggunaanInventaris);
 app.get('/laporan/ayam-tidak-bertelur', laporanController.getAyamTidakBertelur);
+app.post('/laporan/sakit-tanpa-diagnosa', laporanController.createLaporanSakitTanpaDiagnosa);
 
 
 describe('Laporan Controller', () => {
@@ -677,6 +678,74 @@ describe('Laporan Controller', () => {
       expect(res.statusCode).toBe(500);
       expect(res.body.status).toBe(false);
       expect(res.body.message).toBe('DB error');
+    });
+  });
+
+  describe('POST /laporan/sakit-tanpa-diagnosa', () => {
+    const endpoint = '/laporan/sakit-tanpa-diagnosa';
+    const requestBody = {
+      unitBudidayaId: 'unit123',
+      objekBudidayaId: 'obj123',
+      tipe: 'sakit',
+      judul: 'Laporan Sakit A',
+      gambar: 'http://example.com/image.jpg',
+      catatan: 'Ayam lemas sekali',
+      sakit: {
+        penyakit: 'Flu Burung Gejala Ringan'
+      }
+    };
+
+    it('should create new laporan sakit tanpa diagnosa successfully', async () => {
+      const mockLaporan = { id: 'lap123', ...requestBody };
+      const mockSakit = { id: 'sakit123', LaporanId: 'lap123', diagnosisPenyakit: null, status: 'Belum Ditangani' };
+      const mockGejala = { id: 'gej123', nama_gejala: 'Flu Burung Gejala Ringan', gambar: requestBody.gambar };
+      const mockDaftarGejala = { id: 'dg123', sakitId: 'sakit123', gejalaId: 'gej123', catatan: requestBody.catatan };
+
+      originalSequelize.Laporan.create.mockResolvedValue(mockLaporan);
+      originalSequelize.Sakit.create.mockResolvedValue(mockSakit);
+      originalSequelize.Gejala.create.mockResolvedValue(mockGejala);
+      originalSequelize.DaftarGejala.create.mockResolvedValue(mockDaftarGejala);
+
+      const res = await request(app).post(endpoint).send(requestBody);
+
+      expect(res.statusCode).toBe(201);
+      expect(res.body.status).toBe(true);
+      expect(res.body.data.laporanSakit.diagnosisPenyakit).toBeNull();
+      expect(originalSequelize.Sakit.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          diagnosisPenyakit: null,
+          status: 'Belum Ditangani',
+        }),
+        expect.objectContaining({
+          validate: false,
+        })
+      );
+      expect(originalSequelize.Gejala.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          nama_gejala: 'Flu Burung Gejala Ringan',
+          gambar: 'http://example.com/image.jpg',
+        }),
+        expect.any(Object)
+      );
+    });
+
+    it('should return 400 if sakit.penyakit is missing', async () => {
+      const invalidBody = { ...requestBody, sakit: {} };
+      const res = await request(app).post(endpoint).send(invalidBody);
+
+      expect(res.statusCode).toBe(400);
+      expect(res.body.status).toBe(false);
+      expect(res.body.message).toBe('sakit.penyakit wajib diisi');
+    });
+
+    it('should rollback transaction and return 500 on database error', async () => {
+      originalSequelize.Laporan.create.mockRejectedValue(new Error('DB creation error'));
+      const res = await request(app).post(endpoint).send(requestBody);
+
+      expect(res.statusCode).toBe(500);
+      expect(res.body.status).toBe(false);
+      expect(res.body.message).toBe('DB creation error');
+      expect(mockTransaction.rollback).toHaveBeenCalledTimes(1);
     });
   });
 });

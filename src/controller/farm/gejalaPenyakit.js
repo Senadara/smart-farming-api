@@ -1,5 +1,5 @@
 const sequelize = require("../../model/index");
-const { _recalculateCF } = require("./penyakitAyamController");
+
 
 const Gejala = sequelize.Gejala;
 const PenyakitGejala = sequelize.PenyakitGejala;
@@ -117,7 +117,6 @@ const deleteGejalaPenyakit = async (req, res) => {
         // Soft delete: hanya mengisi deletedAt, data relasi tetap aman
         await existingGejala.destroy({ transaction });
 
-        await _recalculateCF(transaction, 'idf');
 
         await transaction.commit();
 

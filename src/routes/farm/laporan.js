@@ -31,6 +31,11 @@ router.post(
   laporanController.createLaporanSakit
 );
 router.post(
+  "/sakit-tanpa-diagnosa",
+  auditMiddleware({ model: Laporan, tableName: "Laporan" }),
+  laporanController.createLaporanSakitTanpaDiagnosa
+);
+router.post(
   "/kematian",
   auditMiddleware({ model: Laporan, tableName: "Laporan" }),
   laporanController.createLaporanKematian
@@ -114,6 +119,11 @@ router.get(
 router.get(
   "/ayam-tidak-bertelur",
   laporanController.getAyamTidakBertelur
+);
+
+router.get(
+  "/ayam-penurunan-produktivitas",
+  laporanController.getAyamPenurunanProduktivitas
 );
 
 router.get(

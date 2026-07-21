@@ -1,5 +1,5 @@
 const { v4: uuidv4 } = require('uuid');
-const { Op } = require('sequelize');
+const { Op, QueryTypes } = require('sequelize');
 const db = require('../../model/index');
 
 const sequelize = db.sequelize;
@@ -16,6 +16,137 @@ const User = db.User;
 const cfHelper = require("../../utils/cfHelper");
 
 const VALID_STATUS = ['Belum Ditangani', 'Pemantauan', 'Sembuh', 'Mati'];
+
+async function describeTableIfExists(tableName, transaction = null) {
+    try {
+        return await sequelize.getQueryInterface().describeTable(tableName, { transaction });
+    } catch (error) {
+        const code = error?.original?.code || error?.parent?.code;
+        if (
+            code === 'ER_NO_SUCH_TABLE' ||
+            String(error?.message || '').includes(`No description found for "${tableName}" table`)
+        ) {
+            return null;
+        }
+
+        throw error;
+    }
+}
+
+async function findPenyakitAyamByIdRaw(id) {
+    if (!id) return null;
+
+    const schema = await describeTableIfExists('penyakit_ayam');
+    if (!schema) return null;
+
+    const rows = await sequelize.query(
+        'SELECT id, nama_penyakit FROM penyakit_ayam WHERE id = :id LIMIT 1',
+        {
+            replacements: { id },
+            type: QueryTypes.SELECT,
+        }
+    );
+
+    return rows[0] || null;
+}
+
+async function findGejalaByIdsRaw(ids = []) {
+    const uniqueIds = [...new Set(ids.filter(Boolean))];
+    if (uniqueIds.length === 0) return [];
+
+    const schema = await describeTableIfExists('gejala');
+    if (!schema) return [];
+
+    const labelColumn = schema.nama_gejala ? 'nama_gejala' : (schema.gejala1 ? 'gejala1' : null);
+    if (!labelColumn) return [];
+
+    const selectColumns = [
+        'id',
+        `${labelColumn} AS nama_gejala`,
+    ];
+
+    if (schema.gambar) {
+        selectColumns.push('gambar');
+    }
+
+    const rows = await sequelize.query(
+        `
+            SELECT ${selectColumns.join(', ')}
+            FROM gejala
+            WHERE id IN (:ids)
+        `,
+        {
+            replacements: { ids: uniqueIds },
+            type: QueryTypes.SELECT,
+        }
+    );
+
+    return rows.map((row) => ({
+        id: row.id,
+        nama_gejala: row.nama_gejala,
+        gambar: row.gambar ?? null,
+    }));
+}
+
+async function findPenangananRaw({ penyakitId = null, gejalaIds = [] } = {}) {
+    const schema = await describeTableIfExists('penangananPenyakitAyam');
+    if (!schema) return [];
+
+    const where = [];
+    const replacements = {};
+
+    if (penyakitId && schema.penyakit_id) {
+        where.push('penyakit_id = :penyakitId');
+        replacements.penyakitId = penyakitId;
+    }
+
+    const validGejalaIds = [...new Set(gejalaIds.filter(Boolean))];
+    if (validGejalaIds.length > 0 && schema.gejala_id) {
+        where.push('gejala_id IN (:gejalaIds)');
+        replacements.gejalaIds = validGejalaIds;
+    }
+
+    if (where.length === 0) return [];
+
+    if (schema.deletedAt) {
+        where.push('deletedAt IS NULL');
+    }
+
+    const rows = await sequelize.query(
+        `
+            SELECT *
+            FROM penangananPenyakitAyam
+            WHERE ${where.join(' AND ')}
+            ORDER BY updatedAt DESC
+        `,
+        {
+            replacements,
+            type: QueryTypes.SELECT,
+        }
+    );
+
+    return rows;
+}
+
+async function findStatusLogRaw(sakitId) {
+    if (!sakitId) return [];
+
+    const schema = await describeTableIfExists('status_log_penyakit_ayam');
+    if (!schema) return [];
+
+    return sequelize.query(
+        `
+            SELECT *
+            FROM status_log_penyakit_ayam
+            WHERE laporan_sakit_id = :sakitId
+            ORDER BY createdAt ASC
+        `,
+        {
+            replacements: { sakitId },
+            type: QueryTypes.SELECT,
+        }
+    );
+}
 
 const getAllPenyakit = async (req, res) => {
 
@@ -47,6 +178,43 @@ const getPenyakitWithGejala = async (req, res) => {
         return res.status(200).json({
             message: 'Successfully retrieved penyakit with gejala data',
             data: penyakit,
+        });
+    } catch (error) {
+        return res.status(500).json({ message: error.message, detail: error });
+    }
+};
+
+const getBobotGejalaTiapPenyakit = async (req, res) => {
+    try {
+        const data = await PenyakitAyam.findAll({
+            attributes: ['id', 'nama_penyakit', 'createdAt', 'updatedAt', 'deletedAt'],
+            paranoid: false,
+            include: [{
+                model: PenyakitGejala,
+                as: 'penyakitGejala',
+                attributes: ['cf_weight'],
+                include: [{ model: Gejala, as: 'gejala', attributes: ['id', 'nama_gejala'] }],
+            }],
+            order: [["nama_penyakit", "ASC"]],
+        });
+
+        // Mapping agar struktur response lebih bersih dan mudah digunakan di frontend
+        const result = data.map(penyakit => ({
+            id: penyakit.id,
+            nama_penyakit: penyakit.nama_penyakit,
+            createdAt: penyakit.createdAt,
+            updatedAt: penyakit.updatedAt,
+            deletedAt: penyakit.deletedAt,
+            gejala: penyakit.penyakitGejala.map(pg => ({
+                id: pg.gejala?.id,
+                nama_gejala: pg.gejala?.nama_gejala,
+                bobot: pg.cf_weight
+            }))
+        }));
+
+        return res.status(200).json({
+            message: 'Berhasil mengambil data gejala dan bobot tiap penyakit',
+            data: result,
         });
     } catch (error) {
         return res.status(500).json({ message: error.message, detail: error });
@@ -94,7 +262,8 @@ const diagnosaPenyakitAyam = async (req, res) => {
         const hasil = await cfHelper.diagnosePenyakit(gejala)
 
         // Penanganan berdasarkan penyakit hasil diagnosa
-        const penanganan = hasil?.id
+        // Jika isTie bernilai true (terdapat cfScore sama semua/imbang), maka JANGAN tampilkan penanganan per penyakit
+        const penanganan = (hasil?.id && !hasil?.isTie)
             ? await PenangananPenyakitAyam.findAll({
                 where: { penyakit_id: hasil.id },
             })
@@ -308,17 +477,20 @@ const updateStatusLaporanPenyakit = async (req, res) => {
             { transaction }
         );
 
-        // 2. Tulis entri log
-        await StatusLogPenyakitAyam.create(
-            {
-                id: uuidv4(),
-                laporan_sakit_id: dataPenyakit.id,
-                status,
-                catatan: catatan ?? null,
-                updated_by: userId,
-            },
-            { transaction }
-        );
+        // 2. Tulis entri log jika tabel status log tersedia di schema aktif.
+        const statusLogSchema = await describeTableIfExists('status_log_penyakit_ayam', transaction);
+        if (StatusLogPenyakitAyam && statusLogSchema) {
+            await StatusLogPenyakitAyam.create(
+                {
+                    id: uuidv4(),
+                    laporan_sakit_id: dataPenyakit.id,
+                    status,
+                    catatan: catatan ?? null,
+                    updated_by: userId,
+                },
+                { transaction }
+            );
+        }
 
         // 3. Jika status diubah menjadi 'Mati', buat laporan kematian otomatis
         if (status === 'Mati') {
@@ -524,12 +696,7 @@ const getRiwayatPenyakitAyamById = async (req, res) => {
         // Kumpulkan semua Laporan ID dalam sesi ini
         const laporanIds = relatedLaporan.map(l => l.id);
 
-        const namaPenyakit = await PenyakitAyam.findOne({
-            where: {
-                id: diagnosisPenyakitId,
-            },
-            paranoid: false,
-        });
+        const namaPenyakit = await findPenyakitAyamByIdRaw(diagnosisPenyakitId);
 
         const laporanGejalaList = await LaporanGejala.findAll({
             where: {
@@ -537,39 +704,19 @@ const getRiwayatPenyakitAyamById = async (req, res) => {
             }
         });
 
-        const listGejala = await Gejala.findAll({
-            where: {
-                id: laporanGejalaList.map((g) => g.gejala_id),
-            },
-            paranoid: false,
-        });
+        const gejalaIds = laporanGejalaList.map((g) => g.gejala_id);
+        const listGejala = await findGejalaByIdsRaw(gejalaIds);
 
-        const penanganan = diagnosisPenyakitId
-            ? await PenangananPenyakitAyam.findAll({
-                where: { penyakit_id: diagnosisPenyakitId },
-            })
-            : [];
+        const penanganan = await findPenangananRaw({ penyakitId: diagnosisPenyakitId });
 
         // Ambil penanganan yang terikat pada gejala-gejala yang terdeteksi di laporan ini
-        const gejalaIds = listGejala.map((g) => g.id);
-        const penangananGejala = gejalaIds.length > 0
-            ? await PenangananPenyakitAyam.findAll({
-                where: { gejala_id: gejalaIds },
-                include: [{ model: Gejala, as: 'gejala', attributes: ['id', 'nama_gejala'] }],
-            })
-            : [];
+        const penangananGejala = await findPenangananRaw({
+            gejalaIds: listGejala.map((g) => g.id),
+        });
 
         // Ambil riwayat status log untuk Sakit yang bersangkutan
         const statusLog = laporan.Sakit
-            ? await StatusLogPenyakitAyam.findAll({
-                where: { laporan_sakit_id: laporan.Sakit.id },
-                include: [{
-                    model: User,
-                    as: 'petugas',
-                    attributes: ['id', 'name'],
-                }],
-                order: [['createdAt', 'ASC']],
-            })
+            ? await findStatusLogRaw(laporan.Sakit.id)
             : [];
 
         return res.status(200).json({
@@ -979,45 +1126,11 @@ const getPenangananByGejala = async (req, res) => {
     }
 };
 
-const _recalculateCF = async (transaction, metode = 'idf') => {
-    const allRelasi = await PenyakitGejala.findAll({ transaction });
-
-    const uniquePenyakitIds = [...new Set(allRelasi.map(r => r.penyakit_id))];
-    const N = uniquePenyakitIds.length;
-
-    const dfMap = {};
-    for (const r of allRelasi) {
-        dfMap[r.gejala_id] = (dfMap[r.gejala_id] || 0) + 1;
-    }
-
-    for (const r of allRelasi) {
-        const df = dfMap[r.gejala_id] || 1;
-        const cfBaru = cfHelper.computeCF(df, N, metode);
-
-        await CfWeightLog.create({
-            id: uuidv4(),
-            penyakit_gejala_id: r.id,
-            cf_weight_lama: r.cf_weight,
-            cf_weight_baru: cfBaru,
-            total_disease_lama: r.total_disease,
-            triggered_by: `recalculate_${metode}`,
-        }, { transaction });
-
-        await r.update({
-            cf_weight: cfBaru,
-            disease_frequency: df,
-            total_disease: N,
-            metode,
-            cf_updated_at: new Date(),
-        }, { transaction });
-    }
-};
-
-
 
 module.exports = {
     getAllPenyakit,
     getPenyakitWithGejala,
+    getBobotGejalaTiapPenyakit,
     getPenyakitWithPenanganan,
     getRiwayatPenyakitAyam,
     getRiwayatPenyakitAyamById,
@@ -1033,5 +1146,4 @@ module.exports = {
     deletePenangananPenyakitAyam,
     updateStatusLaporanPenyakit,
     deletePenyakit,
-    _recalculateCF,
-};
+};
