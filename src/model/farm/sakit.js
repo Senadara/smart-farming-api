@@ -11,16 +11,10 @@ module.exports = (sequelize, DataTypes) => {
             },
             diagnosisPenyakit: {
                 type: DataTypes.UUID,
-                allowNull: false,
-                defaultValue: "-",
-            },
-            status: {
-                type: DataTypes.INTEGER,
                 allowNull: true,
-            },
-            isDeleted: {
-                type: DataTypes.BOOLEAN,
-                defaultValue: false,
+                // FK ke laporan_gejala.id (bukan penyakit_ayam)
+                // Menyimpan ID LaporanGejala yang merupakan pasangan penyakit + gejala
+                // yang terdeteksi saat diagnosa dilakukan
             },
             status: {
                 type: DataTypes.ENUM(
@@ -35,6 +29,10 @@ module.exports = (sequelize, DataTypes) => {
                 allowNull: false,
                 defaultValue: 'Belum Ditangani',
             },
+            isDeleted: {
+                type: DataTypes.BOOLEAN,
+                defaultValue: false,
+            },
         },
         {
             tableName: "sakit",
@@ -44,8 +42,14 @@ module.exports = (sequelize, DataTypes) => {
 
     Sakit.associate = (models) => {
         Sakit.belongsTo(models.Laporan);
-        Sakit.belongsTo(models.PenyakitAyam, { foreignKey: 'diagnosisPenyakit' });
+        // FK diagnosisPenyakit sekarang mengarah ke laporan_gejala
+        Sakit.belongsTo(models.LaporanGejala, {
+            foreignKey: 'diagnosisPenyakit',
+            as: 'laporanGejala',
+            constraints: false, // FK constraint dikelola di migration
+        });
         Sakit.hasMany(models.DaftarGejala, { foreignKey: "sakitId" });
+        Sakit.hasMany(models.StatusLogPenyakitAyam, { foreignKey: "laporan_sakit_id" });
     };
 
     return Sakit;

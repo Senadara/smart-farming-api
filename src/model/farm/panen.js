@@ -23,6 +23,11 @@ module.exports = (sequelize, DataTypes) => {
         defaultValue: 0,
         comment: "Jumlah hewan yang dipanen untuk komoditas ternak atau ikan.",
       },
+      waktuPanen: {
+        type: DataTypes.ENUM("pagi", "sore"),
+        allowNull: true,
+        comment: "Waktu panen dilakukan: 'pagi' atau 'sore'",
+      },
       isDeleted: {
         type: DataTypes.BOOLEAN,
         defaultValue: false,

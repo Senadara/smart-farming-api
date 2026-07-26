@@ -831,7 +831,7 @@ async function createAutomaticHealthIndication(options = {}) {
       context.symptomName || PRODUCTION_DROP_SYMPTOM
     );
     const disease = await ensureProductionDropDisease(gejala, transaction);
-    await ensureDiseaseSymptomReportRelation(disease, gejala, transaction);
+    const laporanGejala = await ensureDiseaseSymptomReportRelation(disease, gejala, transaction);
     const statusLogSchema = await describeTableIfExists(
       "status_log_penyakit_ayam",
       transaction
@@ -856,7 +856,9 @@ async function createAutomaticHealthIndication(options = {}) {
       const sakit = await Sakit.create(
         {
           LaporanId: laporan.id,
-          diagnosisPenyakit: disease.id,
+          // diagnosisPenyakit sekarang FK ke laporan_gejala, bukan penyakit_ayam
+          // laporanGejala adalah hasil dari ensureDiseaseSymptomReportRelation
+          diagnosisPenyakit: laporanGejala?.id ?? null,
           status: "Belum ditangani",
         },
         { transaction }

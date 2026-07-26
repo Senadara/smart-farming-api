@@ -38,6 +38,8 @@ const Produk = sequelize.Produk;
 
 const DaftarGejala = sequelize.DaftarGejala;
 const Gejala = sequelize.Gejala;
+const LaporanGejala = sequelize.LaporanGejala;
+const PenyakitAyam = sequelize.PenyakitAyam;
 const {
   mergeMetrics,
   saveDailyReportMetrics,
@@ -417,6 +419,32 @@ const createLaporanSakit = async (req, res) => {
   try {
     const { sakit } = req.body;
 
+    // diagnosisPenyakit sekarang FK ke laporan_gejala
+    // Jika payload mengirim diagnosisPenyakit sebagai ID penyakit_ayam,
+    // kita perlu cari atau buat baris laporan_gejala terlebih dahulu
+    let diagnosisLaporanGejalaId = null;
+
+    if (sakit.diagnosisPenyakit) {
+      // Cek apakah nilai ini sudah merupakan ID laporan_gejala
+      const existingLg = await LaporanGejala.findByPk(sakit.diagnosisPenyakit, { transaction: t });
+      if (existingLg) {
+        // Sudah berupa ID laporan_gejala
+        diagnosisLaporanGejalaId = existingLg.id;
+      } else {
+        // Mungkin masih berupa ID penyakit_ayam (backward compat)
+        // Buat laporan_gejala dengan gejala dummy jika ada penyakit_ayam
+        const dummyGejala = await Gejala.findOne({ transaction: t });
+        if (dummyGejala) {
+          const [lg] = await LaporanGejala.findOrCreate({
+            where: { penyakit_ayam_id: sakit.diagnosisPenyakit, gejala_id: dummyGejala.id },
+            defaults: { penyakit_ayam_id: sakit.diagnosisPenyakit, gejala_id: dummyGejala.id },
+            transaction: t,
+          });
+          diagnosisLaporanGejalaId = lg.id;
+        }
+      }
+    }
+
     const data = await Laporan.create(
       {
         ...req.body,
@@ -430,8 +458,8 @@ const createLaporanSakit = async (req, res) => {
     const laporanSakit = await Sakit.create(
       {
         LaporanId: data.id,
-        diagnosisPenyakit: sakit.diagnosisPenyakit,
-        status: sakit.status,
+        diagnosisPenyakit: diagnosisLaporanGejalaId,
+        status: sakit.status || 'Belum Ditangani',
       },
       { transaction: t }
     );
@@ -466,6 +494,7 @@ const createLaporanSakit = async (req, res) => {
         laporanSakit,
         gejala,
         daftarGejala,
+        diagnosisLaporanGejalaId,
       },
     });
   } catch (error) {
@@ -800,6 +829,13 @@ const createLaporanPanen = async (req, res) => {
       });
     }
 
+    if (panen.waktuPanen && !["pagi", "sore"].includes(panen.waktuPanen)) {
+      await t.rollback();
+      return res.status(400).json({
+        message: "Waktu panen hanya boleh diisi 'pagi' atau 'sore'.",
+      });
+    }
+
     const panenConfig = normalizePanenConfig(komoditas.panenConfig, komoditas);
 
     const jumlahValidation = validatePositiveField(
@@ -1052,6 +1088,7 @@ const createLaporanPanen = async (req, res) => {
         jumlah: jumlahPanen,
         berat: beratPanen,
         jumlahHewan,
+        waktuPanen: panen.waktuPanen || null,
       },
       { transaction: t }
     );
@@ -1205,6 +1242,13 @@ const createLaporanPanenSimple = async (req, res) => {
       });
     }
 
+    if (panen.waktuPanen && !["pagi", "sore"].includes(panen.waktuPanen)) {
+      await t.rollback();
+      return res.status(400).json({
+        message: "Waktu panen hanya boleh diisi 'pagi' atau 'sore'.",
+      });
+    }
+
     const panenConfig = normalizePanenConfig(komoditas.panenConfig, komoditas);
 
     const jumlahValidation = validatePositiveField(
@@ -1347,6 +1391,7 @@ const createLaporanPanenSimple = async (req, res) => {
         jumlah: jumlahPanen,
         berat: beratPanen,
         jumlahHewan,
+        waktuPanen: panen.waktuPanen || null,
       },
       { transaction: t }
     );
@@ -2315,11 +2360,25 @@ const getLaporanSakitById = async (req, res) => {
         id: id,
         isDeleted: false,
       },
-      attributes: ["id", ["diagnosisPenyakit", "nama"], "status"],
+      attributes: ["id", "diagnosisPenyakit", "status"],
       include: [
         {
           model: Laporan,
           attributes: ["gambar"],
+        },
+        {
+          // Ambil nama penyakit melalui relasi baru: laporan_gejala → penyakit_ayam
+          model: LaporanGejala,
+          as: 'laporanGejala',
+          required: false,
+          attributes: ['id', 'penyakit_ayam_id', 'gejala_id'],
+          include: [{
+            model: PenyakitAyam,
+            as: 'penyakitAyam',
+            paranoid: false,
+            attributes: ['id', 'nama_penyakit'],
+            required: false,
+          }],
         },
         {
           model: DaftarGejala,
@@ -2344,7 +2403,11 @@ const getLaporanSakitById = async (req, res) => {
 
     const responseData = laporanSakit.toJSON();
     responseData.gambar = responseData.Laporan ? responseData.Laporan.gambar : null;
+    // Format nama penyakit dari relasi baru
+    responseData.namaPenyakit = responseData.laporanGejala?.penyakitAyam?.nama_penyakit ?? null;
+    responseData.penyakitAyamId = responseData.laporanGejala?.penyakit_ayam_id ?? null;
     delete responseData.Laporan;
+    delete responseData.laporanGejala;
 
     return res.status(200).json({
       message: "Successfully retrieved sakit data",
@@ -2498,6 +2561,106 @@ const getLaporanVitaminById = async (req, res) => {
   }
 };
 
+const getLaporanPanen = async (req, res) => {
+  try {
+    const { unitBudidayaId } = req.query;
+    const whereCondition = {
+      isDeleted: false,
+      tipe: "panen",
+    };
+
+    if (unitBudidayaId) {
+      whereCondition.UnitBudidayaId = unitBudidayaId;
+    }
+
+    const laporan = await Laporan.findAll({
+      where: whereCondition,
+      include: [
+        {
+          model: Panen,
+          include: [
+            {
+              model: Komoditas,
+              as: "komoditas",
+              attributes: ["id", "nama", "panenConfig"],
+              include: [
+                {
+                  model: Satuan,
+                  attributes: ["nama", "lambang"],
+                },
+              ],
+            },
+            {
+              model: PanenRincianGrade,
+              include: [
+                {
+                  model: Grade,
+                  attributes: ["id", "nama", "deskripsi"],
+                },
+              ],
+              required: false,
+            },
+            {
+              model: DetailPanen,
+              required: false,
+              include: [
+                {
+                  model: ObjekBudidaya,
+                  attributes: ["id", "namaId"],
+                },
+              ],
+            },
+          ],
+        },
+        {
+          model: ObjekBudidaya,
+          attributes: ["namaId"],
+          required: false,
+        },
+        {
+          model: UnitBudidaya,
+          attributes: ["nama"],
+          required: true,
+          include: [
+            {
+              model: JenisBudidaya,
+              attributes: ["nama", "tipe"],
+              required: true,
+            },
+          ],
+        },
+        {
+          model: User,
+          as: "user",
+          attributes: ["name"],
+          required: true,
+        },
+      ],
+      order: [["createdAt", "DESC"]],
+    });
+
+    const responseData = laporan.map(item => {
+      const jsonItem = item.toJSON();
+      if (jsonItem.Panen?.komoditas) {
+        jsonItem.Panen.komoditas = attachPanenConfig(jsonItem.Panen.komoditas);
+      }
+      return jsonItem;
+    });
+
+    return res.status(200).json({
+      status: true,
+      message: "Successfully retrieved laporan data",
+      data: responseData,
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: false,
+      message: error.message,
+      detail: error,
+    });
+  }
+};
+
 const getLaporanPanenById = async (req, res) => {
   try {
     const { id } = req.params;
@@ -2532,6 +2695,16 @@ const getLaporanPanenById = async (req, res) => {
                 },
               ],
               required: false, // Allow harvest records without grades
+            },
+            {
+              model: DetailPanen,
+              required: false,
+              include: [
+                {
+                  model: ObjekBudidaya,
+                  attributes: ["id", "namaId"],
+                },
+              ],
             },
           ],
         },
@@ -3167,6 +3340,7 @@ module.exports = {
   getLaporanSakitById,
   getLaporanKematianById,
   getLaporanVitaminById,
+  getLaporanPanen,
   getLaporanPanenById,
   getLaporanPanenKebunById,
   getLaporanHamaById,

@@ -91,6 +91,8 @@ router.get(
 
 router.get("/vitamin/:id", laporanController.getLaporanVitaminById);
 
+router.get("/panen", laporanController.getLaporanPanen);
+
 router.get("/panen/:id", laporanController.getLaporanPanenById);
 
 router.get("/hama/:id", laporanController.getLaporanHamaById);

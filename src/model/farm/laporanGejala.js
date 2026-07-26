@@ -24,8 +24,14 @@ module.exports = (sequelize, DataTypes) => {
     );
 
     LaporanGejala.associate = (models) => {
-        LaporanGejala.belongsTo(models.PenyakitAyam, { foreignKey: 'penyakit_ayam_id' });
-        LaporanGejala.belongsTo(models.Gejala, { foreignKey: 'gejala_id' });
+        LaporanGejala.belongsTo(models.PenyakitAyam, { foreignKey: 'penyakit_ayam_id', as: 'penyakitAyam' });
+        LaporanGejala.belongsTo(models.Gejala, { foreignKey: 'gejala_id', as: 'gejala' });
+        // Inverse relation: satu baris laporan_gejala dapat direferensikan oleh banyak sakit
+        LaporanGejala.hasMany(models.Sakit, {
+            foreignKey: 'diagnosisPenyakit',
+            as: 'sakitList',
+            constraints: false,
+        });
     };
 
     return LaporanGejala;
