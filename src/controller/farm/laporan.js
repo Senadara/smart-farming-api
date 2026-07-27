@@ -3322,6 +3322,97 @@ const getAyamPenurunanProduktivitas = async (req, res) => {
   }
 }
 
+const createLaporanTelurAbnormal = async (req, res) => {
+  const t = await db.transaction();
+
+  try {
+    const { unitBudidayaId, idObjekBudidaya, waktu, catatan, imageUrl } = req.body;
+
+    if (!unitBudidayaId || !idObjekBudidaya || !waktu || !imageUrl) {
+      await t.rollback();
+      return res.status(400).json({
+        status: false,
+        message: "unitBudidayaId, idObjekBudidaya, waktu, dan imageUrl wajib diisi.",
+      });
+    }
+
+    if (!["pagi", "sore"].includes(waktu)) {
+      await t.rollback();
+      return res.status(400).json({
+        status: false,
+        message: "Waktu panen hanya boleh diisi 'pagi' atau 'sore'.",
+      });
+    }
+
+    const objekBudidaya = await ObjekBudidaya.findOne({
+      where: { id: idObjekBudidaya, isDeleted: false },
+      transaction: t,
+    });
+
+    if (!objekBudidaya) {
+      await t.rollback();
+      return res.status(404).json({
+        status: false,
+        message: "Objek budidaya tidak ditemukan.",
+      });
+    }
+
+    const laporanPayload = {
+      judul: req.body.judul || "Laporan Telur Abnormal",
+      tipe: "panen",
+      UnitBudidayaId: unitBudidayaId,
+      ObjekBudidayaId: idObjekBudidaya,
+      UserId: req.user.id,
+      gambar: imageUrl,
+      catatan: catatan || null,
+    };
+
+    if (req.body.createdAt) {
+      laporanPayload.createdAt = req.body.createdAt;
+    }
+
+    const data = await Laporan.create(laporanPayload, { transaction: t });
+
+    const laporanPanen = await Panen.create(
+      {
+        LaporanId: data.id,
+        komoditasId: null,
+        jumlah: 1, 
+        berat: 0,
+        jumlahHewan: 0,
+        waktuPanen: waktu,
+      },
+      { transaction: t }
+    );
+
+    await DetailPanen.create(
+      {
+        PanenId: laporanPanen.id,
+        ObjekBudidayaId: idObjekBudidaya,
+      },
+      { transaction: t }
+    );
+
+    await t.commit();
+
+    return res.status(201).json({
+      status: true,
+      message: "Successfully created laporan telur abnormal",
+      data: {
+        data,
+        laporanPanen,
+      },
+    });
+  } catch (error) {
+    await t.rollback();
+    return res.status(500).json({
+      status: false,
+      message: error.message,
+      detail: error,
+    });
+  }
+};
+
 module.exports = {
   createLaporanHarianKebun,
   getLastHarianKebunByObjekBudidayaId,
@@ -3332,6 +3423,7 @@ module.exports = {
   createLaporanVitamin,
   createLaporanPanen,
   createLaporanPanenSimple,
+  createLaporanTelurAbnormal,
   createLaporanPanenKebun,
   createLaporanHama,
   createLaporanPenggunaanInventaris,

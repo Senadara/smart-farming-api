@@ -59,6 +59,12 @@ router.post(
 );
 
 router.post(
+  "/telur-abnormal",
+  auditMiddleware({ model: Laporan, tableName: "Laporan" }),
+  laporanController.createLaporanTelurAbnormal
+);
+
+router.post(
   "/hama",
   auditMiddleware({ model: Laporan, tableName: "Laporan" }),
   laporanController.createLaporanHama
