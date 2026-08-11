@@ -15,9 +15,10 @@ describe('ObjekBudidaya Model', () => {
 
     const Laporan = sequelize.define('Laporan', {});
     const UnitBudidaya = sequelize.define('UnitBudidaya', {});
+    const DetailPanen = sequelize.define('DetailPanen', {});
 
     ObjekBudidaya = defineObjekBudidaya(sequelize, DataTypes);
-    ObjekBudidaya.associate({ Laporan, UnitBudidaya });
+    ObjekBudidaya.associate({ Laporan, UnitBudidaya, DetailPanen });
 
     await sequelize.sync();
   });
@@ -50,6 +51,7 @@ describe('ObjekBudidaya Model', () => {
   it('should have associations defined', () => {
     expect(ObjekBudidaya.associations).toBeDefined();
     expect(ObjekBudidaya.associations.Laporans).toBeDefined();
+    expect(ObjekBudidaya.associations.DetailPanen).toBeDefined();
     expect(ObjekBudidaya.associations.UnitBudidaya).toBeDefined();
   });
 
@@ -106,6 +108,21 @@ describe('ObjekBudidaya Model', () => {
   it('should set isDeleted to false by default', async () => {
     const obj = await ObjekBudidaya.create({ namaId: 'OBJ010', deskripsi: 'Deskripsi dengan default isDeleted' });
     expect(obj.isDeleted).toBe(false);
+  });
+
+  it('should store lifecycle metadata for mixed-age livestock batches', async () => {
+    const obj = await ObjekBudidaya.create({
+      namaId: 'OBJ011',
+      tanggalMasuk: '2026-01-10',
+      umurMasukMinggu: 22,
+      targetAfkirAt: '2027-02-01',
+      batchKode: 'LAYER-BATCH-02',
+    });
+
+    expect(obj.tanggalMasuk).toBe('2026-01-10');
+    expect(obj.umurMasukMinggu).toBe(22);
+    expect(obj.targetAfkirAt).toBe('2027-02-01');
+    expect(obj.batchKode).toBe('LAYER-BATCH-02');
   });
 
 });

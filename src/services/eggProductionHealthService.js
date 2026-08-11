@@ -22,11 +22,13 @@ const {
 const QueryTypes = Sequelize.QueryTypes;
 const DEFAULT_DAYS = 7;
 const DEFAULT_THRESHOLD_PERCENT = 40;
+const DEFAULT_LAYER_AFKIR_AGE_WEEKS = 80;
 const PRODUCTION_DROP_SYMPTOM = "Penurunan produksi telur >= 40% selama 7 hari";
 const INDIVIDUAL_PRODUCTIVITY_DROP_SYMPTOM = "Penurunan produktivitas bertelur individu >= 40% dibanding periode sebelumnya";
 const PRODUCTION_DROP_DISEASE = "Indikasi Gangguan Produktivitas Telur";
 const INDICATION_CODE = "egg_production_drop_40_percent_7_days";
 const INDIVIDUAL_PRODUCTIVITY_DROP_CODE = "individual_egg_productivity_drop_40_percent";
+let objekBudidayaLifecycleAttributes = null;
 
 function parsePositiveInteger(value, fallback) {
   const parsed = Number(value);
@@ -77,11 +79,89 @@ function round(value, digits = 2) {
   return Math.round((Number(value) || 0) * multiplier) / multiplier;
 }
 
+function parseOptionalDate(value) {
+  if (!value) {
+    return null;
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatOptionalDate(date) {
+  return date ? formatDate(date) : null;
+}
+
+function diffWeeks(start, end) {
+  const ms = end.getTime() - start.getTime();
+  return Math.floor(ms / (7 * 24 * 60 * 60 * 1000));
+}
+
+function lifecycleForChicken(chicken, referenceDate) {
+  const reference = parseOptionalDate(referenceDate) || new Date();
+  const entryDate = parseOptionalDate(chicken.tanggalMasuk)
+    || parseOptionalDate(chicken.createdAt)
+    || reference;
+  const entryAgeWeeks = Number.isFinite(Number(chicken.umurMasukMinggu))
+    ? Math.max(0, Number(chicken.umurMasukMinggu))
+    : 0;
+  const ageWeeks = Math.max(0, entryAgeWeeks + diffWeeks(entryDate, reference));
+  const targetAfkir = parseOptionalDate(chicken.targetAfkirAt) || (() => {
+    const date = new Date(entryDate);
+    date.setDate(date.getDate() + Math.max(DEFAULT_LAYER_AFKIR_AGE_WEEKS - entryAgeWeeks, 0) * 7);
+    return date;
+  })();
+  const afkirWeeksRemaining = diffWeeks(reference, targetAfkir);
+  const afkirStatus = afkirWeeksRemaining < 0
+    ? "overdue"
+    : (afkirWeeksRemaining <= 8 ? "due_soon" : "normal");
+  const phase = afkirStatus === "overdue"
+    ? "Lewat target afkir"
+    : (afkirStatus === "due_soon"
+      ? "Mendekati afkir"
+      : (ageWeeks < 18 ? "Grower" : (ageWeeks <= 45 ? "Produksi awal/puncak" : "Produksi lanjut")));
+
+  return {
+    batchCode: chicken.batchKode || `Masuk ${formatOptionalDate(entryDate)}`,
+    entryDate: formatOptionalDate(entryDate),
+    entryAgeWeeks,
+    ageWeeks,
+    ageLabel: `${ageWeeks} minggu`,
+    targetAfkirDate: formatOptionalDate(targetAfkir),
+    afkirWeeksRemaining,
+    afkirStatus,
+    phase,
+  };
+}
+
 async function getUnit(unitBudidayaId) {
   return UnitBudidaya.findOne({
     where: { id: unitBudidayaId, isDeleted: false },
     attributes: ["id", "nama", "tipe", "jumlah"],
   });
+}
+
+async function getObjekBudidayaAttributes() {
+  if (objekBudidayaLifecycleAttributes) {
+    return objekBudidayaLifecycleAttributes;
+  }
+
+  try {
+    const table = await sequelize.getQueryInterface().describeTable("objekBudidaya");
+    objekBudidayaLifecycleAttributes = [
+      "id",
+      "namaId",
+      "createdAt",
+      "tanggalMasuk",
+      "umurMasukMinggu",
+      "targetAfkirAt",
+      "batchKode",
+    ].filter((column) => table[column]);
+  } catch (error) {
+    objekBudidayaLifecycleAttributes = ["id", "namaId", "createdAt"];
+  }
+
+  return objekBudidayaLifecycleAttributes;
 }
 
 async function getActiveChickens(unitBudidayaId) {
@@ -90,7 +170,7 @@ async function getActiveChickens(unitBudidayaId) {
       UnitBudidayaId: unitBudidayaId,
       isDeleted: false,
     },
-    attributes: ["id", "namaId"],
+    attributes: await getObjekBudidayaAttributes(),
     order: [["namaId", "ASC"]],
   });
 }
@@ -165,6 +245,11 @@ async function getIndividualLayingDayRows(unitBudidayaId, start, end) {
 function sortIndividualRows(rows, sortBy = "drop", direction = "desc") {
   const normalizedDirection = String(direction).toLowerCase() === "asc" ? "asc" : "desc";
   const multiplier = normalizedDirection === "asc" ? 1 : -1;
+  const naturalCompare = (left, right) => String(left || "").localeCompare(
+    String(right || ""),
+    undefined,
+    { numeric: true, sensitivity: "base" }
+  );
 
   const valueFor = (row) => {
     switch (sortBy) {
@@ -194,11 +279,21 @@ function sortIndividualRows(rows, sortBy = "drop", direction = "desc") {
     const bv = valueFor(b);
 
     if (typeof av === "string" || typeof bv === "string") {
-      return String(av).localeCompare(String(bv)) * multiplier;
+      const compared = naturalCompare(av, bv);
+      if (compared !== 0) {
+        return compared * multiplier;
+      }
+
+      return naturalCompare(a.id, b.id);
     }
 
     if (av === bv) {
-      return String(a.namaId || "").localeCompare(String(b.namaId || ""));
+      const compared = naturalCompare(a.namaId, b.namaId);
+      if (compared !== 0) {
+        return compared;
+      }
+
+      return naturalCompare(a.id, b.id);
     }
 
     return av > bv ? multiplier : -multiplier;
@@ -367,6 +462,7 @@ async function getIndividualEggProductivityContext(options = {}) {
     return {
       id: ayam.id,
       namaId: ayam.namaId,
+      lifecycle: lifecycleForChicken(ayam, currentRange.end),
       current: {
         layingDays: currentLayingDays,
         nonLayingDays: Math.max(currentRange.days - currentLayingDays, 0),

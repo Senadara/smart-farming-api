@@ -6,6 +6,32 @@ const Komoditas = sequelize.Komoditas;
 const { dataValid } = require("../../validation/dataValidation");
 const { getPaginationOptions } = require("../../utils/paginationUtils");
 
+const normalizeMasterValue = (value) =>
+  String(value || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+
+const displayMasterValue = (value) =>
+  String(value || "")
+    .trim()
+    .replace(/\s+/g, " ");
+
+const findSatuanByNormalizedField = async (field, value, { isDeleted, excludeId } = {}) => {
+  const where = {};
+  if (typeof isDeleted === "boolean") {
+    where.isDeleted = isDeleted;
+  }
+  if (excludeId) {
+    where.id = { [Op.ne]: excludeId };
+  }
+
+  const normalized = normalizeMasterValue(value);
+  const rows = await Satuan.findAll({ where });
+
+  return rows.find((row) => normalizeMasterValue(row[field]) === normalized) || null;
+};
+
 const getAllSatuan = async (req, res) => {
   try {
     const { page, limit, nama, lambang } = req.query;
@@ -145,19 +171,34 @@ const createSatuan = async (req, res) => {
   }
 
   try {
+    const normalizedPayload = {
+      ...req.body,
+      nama: displayMasterValue(req.body.nama),
+      lambang: displayMasterValue(req.body.lambang),
+    };
+
     // Cek apakah ada data dengan nama yang sama yang sudah di-soft delete
-    const softDeleted = await Satuan.findOne({
-      where: {
-        nama: req.body.nama,
-        isDeleted: true,
-      },
+    const softDeleted = await findSatuanByNormalizedField("nama", normalizedPayload.nama, {
+      isDeleted: true,
     });
 
     if (softDeleted) {
+      const existingLambang = await findSatuanByNormalizedField("lambang", normalizedPayload.lambang, {
+        excludeId: softDeleted.id,
+      });
+
+      if (existingLambang) {
+        return res.status(400).json({
+          status: false,
+          message:
+            "Satuan dengan lambang tersebut sudah ada. Silakan gunakan lambang yang berbeda.",
+        });
+      }
+
       // Restore data yang sudah di-soft delete dengan update semua field
       await Satuan.update(
         {
-          ...req.body,
+          ...normalizedPayload,
           isDeleted: false,
           updatedAt: new Date(),
         },
@@ -181,11 +222,8 @@ const createSatuan = async (req, res) => {
     }
 
     // Cek apakah ada data aktif dengan nama yang sama
-    const existingNama = await Satuan.findOne({
-      where: {
-        nama: req.body.nama,
-        isDeleted: false,
-      },
+    const existingNama = await findSatuanByNormalizedField("nama", normalizedPayload.nama, {
+      isDeleted: false,
     });
 
     if (existingNama) {
@@ -197,12 +235,7 @@ const createSatuan = async (req, res) => {
     }
 
     // Cek apakah ada data aktif dengan lambang yang sama
-    const existingLambang = await Satuan.findOne({
-      where: {
-        lambang: req.body.lambang,
-        isDeleted: false,
-      },
-    });
+    const existingLambang = await findSatuanByNormalizedField("lambang", normalizedPayload.lambang);
 
     if (existingLambang) {
       return res.status(400).json({
@@ -214,7 +247,7 @@ const createSatuan = async (req, res) => {
 
     // Buat data baru jika tidak ada duplikasi
     const data = await Satuan.create({
-      ...req.body,
+      ...normalizedPayload,
       isDeleted: false,
     });
 
@@ -248,13 +281,10 @@ const updateSatuan = async (req, res) => {
     }
 
     // Jika nama diubah, cek apakah nama baru sudah ada
-    if (req.body.nama && req.body.nama !== data.nama) {
-      const existing = await Satuan.findOne({
-        where: {
-          nama: req.body.nama,
-          isDeleted: false,
-          id: { [Op.ne]: req.params.id }, // Exclude current record
-        },
+    if (req.body.nama) {
+      req.body.nama = displayMasterValue(req.body.nama);
+      const existing = await findSatuanByNormalizedField("nama", req.body.nama, {
+        excludeId: req.params.id,
       });
 
       if (existing) {
@@ -267,13 +297,10 @@ const updateSatuan = async (req, res) => {
     }
 
     // Jika lambang diubah, cek apakah lambang baru sudah ada
-    if (req.body.lambang && req.body.lambang !== data.lambang) {
-      const existing = await Satuan.findOne({
-        where: {
-          lambang: req.body.lambang,
-          isDeleted: false,
-          id: { [Op.ne]: req.params.id }, // Exclude current record
-        },
+    if (req.body.lambang) {
+      req.body.lambang = displayMasterValue(req.body.lambang);
+      const existing = await findSatuanByNormalizedField("lambang", req.body.lambang, {
+        excludeId: req.params.id,
       });
 
       if (existing) {
@@ -378,6 +405,7 @@ module.exports = {
   getAllSatuan,
   getSatuanById,
   getSatuanSearch,
+  getSatuanByName: getSatuanSearch,
   createSatuan,
   updateSatuan,
   deleteSatuan,

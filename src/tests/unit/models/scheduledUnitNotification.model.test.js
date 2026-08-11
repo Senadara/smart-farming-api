@@ -653,8 +653,11 @@ describe("ScheduledUnitNotification Model", () => {
       // Call the associate function from the model
       ScheduledUnitNotification.associate(mockModels);
 
-      // Verify that belongsTo was called with UnitBudidaya
-      expect(belongsToSpy).toHaveBeenCalledWith(mockModels.UnitBudidaya);
+      // Verify that belongsTo uses the table column expected by mobile data.
+      expect(belongsToSpy).toHaveBeenCalledWith(
+        mockModels.UnitBudidaya,
+        expect.objectContaining({ foreignKey: "unitBudidayaId" })
+      );
 
       // Restore the spy
       belongsToSpy.mockRestore();

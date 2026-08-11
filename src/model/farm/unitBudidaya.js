@@ -61,7 +61,9 @@ module.exports = (sequelize, DataTypes) => {
 
     UnitBudidaya.hasMany(models.Laporan);
     UnitBudidaya.hasMany(models.ObjekBudidaya);
-    UnitBudidaya.hasMany(models.ScheduledUnitNotification);
+    UnitBudidaya.hasMany(models.ScheduledUnitNotification, {
+      foreignKey: "unitBudidayaId",
+    });
   };
 
   return UnitBudidaya;

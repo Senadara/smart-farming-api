@@ -20,6 +20,25 @@ module.exports = (sequelize, DataTypes) => {
       deskripsi: {
         type: DataTypes.TEXT,
       },
+      tanggalMasuk: {
+        type: DataTypes.DATEONLY,
+        allowNull: true,
+      },
+      umurMasukMinggu: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        validate: {
+          min: 0,
+        },
+      },
+      targetAfkirAt: {
+        type: DataTypes.DATEONLY,
+        allowNull: true,
+      },
+      batchKode: {
+        type: DataTypes.STRING,
+        allowNull: true,
+      },
       isDeleted: {
         type: DataTypes.BOOLEAN,
         defaultValue: false,

@@ -5,17 +5,13 @@ const MQTT_CONFIG = {
   host:
     process.env.MQTT_HOST ||
     "66e902ef0191400bbe2d33639d2171d8.s1.eu.hivemq.cloud",
-  port: parseInt(process.env.MQTT_PORT) || 8883,
+  port: parseInt(process.env.MQTT_PORT, 10) || 8883,
   username: process.env.MQTT_USERNAME || "smartfarm",
   password: process.env.MQTT_PASSWORD || "Smartfarm123",
   topic: process.env.MQTT_TOPIC || "dht22/sensor",
 };
 
-const FORCE_SAVE_INTERVAL_MS = 30 * 60 * 1000;
-
 let client = null;
-let lastSavedData = null;
-let lastSavedTime = null;
 
 const getTimestamp = () =>
   new Date().toLocaleString("id-ID", {
@@ -33,35 +29,9 @@ const parsePayload = (payload) => {
   }
 };
 
-const isSameData = (newData) => {
-  if (!lastSavedData) return false;
-  return (
-    newData.temperature === lastSavedData.temperature &&
-    newData.humidity === lastSavedData.humidity
-  );
-};
-
-const shouldForceSave = () => {
-  if (!lastSavedTime) return true;
-  return Date.now() - lastSavedTime >= FORCE_SAVE_INTERVAL_MS;
-};
-
-const saveIfChangedOrForce = async (data) => {
+const saveMqttPayload = async (data) => {
   if (data.temperature === undefined || data.humidity === undefined) {
     console.log(`[${getTimestamp()}] [MQTT] Data tidak valid, skip`);
-    return false;
-  }
-
-  const dataIsSame = isSameData(data);
-  const needForceSave = shouldForceSave();
-
-  if (dataIsSame && !needForceSave) {
-    const minutesSinceLastSave = lastSavedTime
-      ? Math.floor((Date.now() - lastSavedTime) / 60000)
-      : 0;
-    console.log(
-      `[${getTimestamp()}] [MQTT] Data sama, skip save (${minutesSinceLastSave} menit sejak save terakhir).`
-    );
     return false;
   }
 
@@ -74,21 +44,23 @@ const saveIfChangedOrForce = async (data) => {
     });
 
     if (result.inserted <= 0) {
+      if (result.suppressed > 0) {
+        console.log(
+          `[${getTimestamp()}] [MQTT] Data sama dan belum 10 menit, tidak disimpan ulang.`
+        );
+        return false;
+      }
+
       console.log(
-        `[${getTimestamp()}] [MQTT] No IoT rows saved: ${result.reason || "mapping not matched"}`
+        `[${getTimestamp()}] [MQTT] No IoT rows saved: ${
+          result.reason || "mapping not matched"
+        }`
       );
       return false;
     }
 
-    lastSavedData = {
-      temperature: data.temperature,
-      humidity: data.humidity,
-    };
-    lastSavedTime = Date.now();
-
-    const saveReason = dataIsSame ? "FORCE SAVE" : "DATA CHANGED";
     console.log(
-      `[${getTimestamp()}] [MQTT] Saved [${saveReason}]: temp=${data.temperature}, hum=${data.humidity}`
+      `[${getTimestamp()}] [MQTT] Saved: temp=${data.temperature}, hum=${data.humidity}`
     );
     return true;
   } catch (error) {
@@ -97,18 +69,11 @@ const saveIfChangedOrForce = async (data) => {
   }
 };
 
-const initLastSavedData = async () => {
-  lastSavedData = null;
-  lastSavedTime = null;
-};
-
 const startMqttClient = async () => {
-  await initLastSavedData();
-
   const brokerUrl = `mqtts://${MQTT_CONFIG.host}:${MQTT_CONFIG.port}`;
 
   console.log(`[${getTimestamp()}] [MQTT] Connecting to ${MQTT_CONFIG.host}...`);
-  console.log(`[${getTimestamp()}] [MQTT] Force save interval: 30 minutes`);
+  console.log(`[${getTimestamp()}] [MQTT] History save rule: changed value or every 10 minutes`);
 
   client = mqtt.connect(brokerUrl, {
     username: MQTT_CONFIG.username,
@@ -141,9 +106,9 @@ const startMqttClient = async () => {
     }
 
     console.log(
-      `[${getTimestamp()}] [MQTT] Received: temp=${data.temperature}, hum=${data.humidity}`
+      `[${getTimestamp()}] [MQTT] Received topic=${topic}: temp=${data.temperature}, hum=${data.humidity}`
     );
-    await saveIfChangedOrForce(data);
+    await saveMqttPayload(data);
   });
 
   client.on("error", (err) => {

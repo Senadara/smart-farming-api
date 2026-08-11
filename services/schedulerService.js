@@ -14,6 +14,41 @@ const Komoditas = sequelize.Komoditas;
 const MidtransOrder = sequelize.MidtransOrder;
 const { checkHealthIndicationScheduler } = require("./healthIndicationSchedulerService");
 
+async function countTodayHarvestReports(unitBudidayaId, now) {
+  if (!unitBudidayaId) {
+    return 0;
+  }
+
+  try {
+    const rows = await sequelize.sequelize.query(
+      `
+        SELECT COUNT(DISTINCT p.id) AS total
+        FROM panen p
+        INNER JOIN laporan l ON l.id = p.laporanId AND l.isDeleted = 0
+        WHERE p.isDeleted = 0
+          AND l.tipe = 'panen'
+          AND l.unitBudidayaId = :unitBudidayaId
+          AND DATE(l.createdAt) = :date
+      `,
+      {
+        replacements: {
+          unitBudidayaId,
+          date: now.format("YYYY-MM-DD"),
+        },
+        type: sequelize.Sequelize.QueryTypes.SELECT,
+      }
+    );
+
+    return Number(rows?.[0]?.total || 0);
+  } catch (error) {
+    console.error(
+      `[${moment().format()}] Scheduler Error (HarvestReminderCheck):`,
+      error
+    );
+    return 0;
+  }
+}
+
 async function checkAndSendScheduledNotifications() {
   const now = moment();
   console.log(
@@ -135,6 +170,22 @@ async function checkAndSendScheduledNotifications() {
       }
 
       if (shouldSendUnitSchedule) {
+        if (schedule.tipeLaporan === "panen") {
+          const harvestCount = await countTodayHarvestReports(
+            schedule.unitBudidayaId,
+            now
+          );
+
+          if (harvestCount > 0) {
+            console.log(
+              `[UNIT][${now.format("HH:mm")}] Skipping harvest reminder for "${
+                schedule.UnitBudidaya?.nama || schedule.unitBudidayaId
+              }" because harvest report already exists today.`
+            );
+            continue;
+          }
+        }
+
         const title = schedule.title;
         const message = schedule.messageTemplate;
 

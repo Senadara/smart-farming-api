@@ -7,6 +7,9 @@ const IotParameterMapping = sequelize.IotParameterMapping;
 const IotSensorData = sequelize.IotSensorData;
 const IotDeviceLog = sequelize.IotDeviceLog;
 
+const MQTT_HISTORY_SAVE_INTERVAL_MS = 10 * 60 * 1000;
+const VALUE_EPSILON = 0.000001;
+
 function getByPath(payload, path) {
   if (!path) return undefined;
   if (!payload || typeof payload !== "object") return undefined;
@@ -86,6 +89,62 @@ async function markDeviceMiss(device, reason, transaction) {
   );
 }
 
+function isMqttSource(source) {
+  return String(source || "").trim().toLowerCase().startsWith("mqtt");
+}
+
+function timestampMs(value) {
+  if (!value) return null;
+
+  const date = value instanceof Date ? value : new Date(value);
+  const time = date.getTime();
+
+  return Number.isFinite(time) ? time : null;
+}
+
+async function shouldPersistReading({
+  deviceId,
+  parameterId,
+  value,
+  timestamp,
+  source,
+  transaction,
+}) {
+  if (!isMqttSource(source)) {
+    return true;
+  }
+
+  const latest = await IotSensorData.findOne({
+    where: {
+      deviceId,
+      parameterId,
+      [Op.or]: [{ isDeleted: false }, { isDeleted: null }],
+    },
+    order: [
+      ["sensorTimestamp", "DESC"],
+      ["createdAt", "DESC"],
+    ],
+    transaction,
+  });
+
+  if (!latest) {
+    return true;
+  }
+
+  if (Math.abs(Number(latest.value) - value) > VALUE_EPSILON) {
+    return true;
+  }
+
+  const lastSavedAt = timestampMs(latest.sensorTimestamp || latest.createdAt);
+  const currentAt = timestampMs(timestamp) || Date.now();
+
+  if (!lastSavedAt) {
+    return true;
+  }
+
+  return currentAt - lastSavedAt >= MQTT_HISTORY_SAVE_INTERVAL_MS;
+}
+
 async function loadDevice(deviceCode, payload) {
   const include = [
     {
@@ -144,6 +203,7 @@ async function saveIotPayload({ deviceCode, payload, timestamp = new Date(), sou
   try {
     const rows = [];
     let skipped = 0;
+    let suppressed = 0;
 
     for (const mapping of device.parameterMappings || []) {
       const rawValue =
@@ -154,6 +214,21 @@ async function saveIotPayload({ deviceCode, payload, timestamp = new Date(), sou
 
       if (!Number.isFinite(value)) {
         skipped += 1;
+        continue;
+      }
+
+      const shouldPersist = await shouldPersistReading({
+        deviceId: device.id,
+        parameterId: mapping.parameterId,
+        value,
+        timestamp,
+        source,
+        transaction,
+      });
+
+      if (!shouldPersist) {
+        skipped += 1;
+        suppressed += 1;
         continue;
       }
 
@@ -174,6 +249,8 @@ async function saveIotPayload({ deviceCode, payload, timestamp = new Date(), sou
         `[${source}] ${rows.length} parameter sensor tercatat.`,
         transaction
       );
+    } else if (suppressed > 0) {
+      await markDeviceOnline(device, timestamp, transaction);
     } else {
       await markDeviceMiss(
         device,
@@ -187,6 +264,7 @@ async function saveIotPayload({ deviceCode, payload, timestamp = new Date(), sou
     return {
       inserted: rows.length,
       skipped,
+      suppressed,
       deviceCode: device.deviceCode,
     };
   } catch (error) {

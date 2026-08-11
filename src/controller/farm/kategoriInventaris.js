@@ -5,6 +5,32 @@ const Inventaris = sequelize.Inventaris;
 const { dataValid } = require("../../validation/dataValidation");
 const { getPaginationOptions } = require("../../utils/paginationUtils");
 
+const normalizeMasterName = (value) =>
+  String(value || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+
+const displayMasterName = (value) =>
+  String(value || "")
+    .trim()
+    .replace(/\s+/g, " ");
+
+const findKategoriByNormalizedName = async (nama, { isDeleted, excludeId } = {}) => {
+  const where = {};
+  if (typeof isDeleted === "boolean") {
+    where.isDeleted = isDeleted;
+  }
+  if (excludeId) {
+    where.id = { [Op.ne]: excludeId };
+  }
+
+  const normalized = normalizeMasterName(nama);
+  const rows = await KategoriInventaris.findAll({ where });
+
+  return rows.find((row) => normalizeMasterName(row.nama) === normalized) || null;
+};
+
 const getAllKategoriInventaris = async (req, res) => {
   try {
     const { page, limit, nama } = req.query;
@@ -161,19 +187,21 @@ const createKategoriInventaris = async (req, res) => {
     });
   }
   try {
+    const normalizedPayload = {
+      ...req.body,
+      nama: displayMasterName(req.body.nama),
+    };
+
     // Cek apakah ada data dengan nama yang sama yang sudah di-soft delete
-    const softDeleted = await KategoriInventaris.findOne({
-      where: {
-        nama: req.body.nama,
-        isDeleted: true,
-      },
+    const softDeleted = await findKategoriByNormalizedName(normalizedPayload.nama, {
+      isDeleted: true,
     });
 
     if (softDeleted) {
       // Restore data yang sudah di-soft delete dengan update semua field
       await KategoriInventaris.update(
         {
-          ...req.body,
+          ...normalizedPayload,
           isDeleted: false,
           updatedAt: new Date(),
         },
@@ -197,11 +225,8 @@ const createKategoriInventaris = async (req, res) => {
     }
 
     // Cek apakah ada data aktif dengan nama yang sama
-    const existing = await KategoriInventaris.findOne({
-      where: {
-        nama: req.body.nama,
-        isDeleted: false,
-      },
+    const existing = await findKategoriByNormalizedName(normalizedPayload.nama, {
+      isDeleted: false,
     });
 
     if (existing) {
@@ -214,7 +239,7 @@ const createKategoriInventaris = async (req, res) => {
 
     // Buat data baru jika tidak ada duplikasi
     const data = await KategoriInventaris.create({
-      ...req.body,
+      ...normalizedPayload,
       isDeleted: false,
     });
 
@@ -248,13 +273,10 @@ const updateKategoriInventaris = async (req, res) => {
     }
 
     // Jika nama diubah, cek apakah nama baru sudah ada
-    if (req.body.nama && req.body.nama !== data.nama) {
-      const existing = await KategoriInventaris.findOne({
-        where: {
-          nama: req.body.nama,
-          isDeleted: false,
-          id: { [Op.ne]: req.params.id }, // Exclude current record
-        },
+    if (req.body.nama) {
+      req.body.nama = displayMasterName(req.body.nama);
+      const existing = await findKategoriByNormalizedName(req.body.nama, {
+        excludeId: req.params.id,
       });
 
       if (existing) {
@@ -342,6 +364,7 @@ module.exports = {
   getAllKategoriInventaris,
   getKategoriInventarisById,
   getKategoriInventarisSearch,
+  getKategoriInventarisByName: getKategoriInventarisSearch,
   getKategoriInventarisOnly,
   createKategoriInventaris,
   updateKategoriInventaris,

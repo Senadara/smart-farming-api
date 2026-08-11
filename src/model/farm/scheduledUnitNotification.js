@@ -65,7 +65,9 @@ module.exports = (sequelize, DataTypes) => {
   );
 
   ScheduledUnitNotification.associate = (models) => {
-    ScheduledUnitNotification.belongsTo(models.UnitBudidaya);
+    ScheduledUnitNotification.belongsTo(models.UnitBudidaya, {
+      foreignKey: "unitBudidayaId",
+    });
   };
   return ScheduledUnitNotification;
 };

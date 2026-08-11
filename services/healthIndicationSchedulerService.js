@@ -10,10 +10,11 @@ const QueryTypes = Sequelize.QueryTypes;
 
 const SETTINGS_TABLE = "spk_health_scheduler_settings";
 const DEFAULT_SETTING_ID = "9f0b1800-0000-4000-8000-000000000601";
-const DEFAULT_SCHEDULE_TIMES = ["07:00"];
+const DEFAULT_SCHEDULE_TIMES = ["07:00", "16:00"];
 const DEFAULT_DAYS = 7;
 const DEFAULT_THRESHOLD_PERCENT = 40;
 const DEFAULT_TARGET_ROLE = "petugas";
+const REQUIRED_DAILY_HARVEST_SESSIONS = 2;
 
 let schedulerRunning = false;
 
@@ -78,13 +79,20 @@ function parsePercent(value, fallback) {
 
 function normalizeSetting(row, available = true) {
   const scheduleTimes = parseScheduleTimes(row?.schedule_times);
+  const normalizedScheduleTimes = scheduleTimes.length > 0
+    ? scheduleTimes
+    : DEFAULT_SCHEDULE_TIMES;
+
+  if (normalizedScheduleTimes.length < 2) {
+    normalizedScheduleTimes.push(DEFAULT_SCHEDULE_TIMES[1]);
+  }
 
   return {
     available,
     id: row?.id || DEFAULT_SETTING_ID,
     isEnabled: parseBoolean(row?.is_enabled),
-    scheduleTimes: scheduleTimes.length > 0 ? scheduleTimes : DEFAULT_SCHEDULE_TIMES,
-    days: parseInteger(row?.days, DEFAULT_DAYS, [7, 14, 30]),
+    scheduleTimes: [...new Set(normalizedScheduleTimes)].sort(),
+    days: parseInteger(row?.days, DEFAULT_DAYS, [7, 14, 30, 90, 180, 365]),
     thresholdPercent: parsePercent(row?.threshold_percent, DEFAULT_THRESHOLD_PERCENT),
     targetRole: row?.target_role || DEFAULT_TARGET_ROLE,
     lastRunAt: row?.last_run_at || null,
@@ -234,6 +242,44 @@ async function getIndividualUnits() {
   });
 }
 
+function requiredHarvestSessionsForRun(setting, now) {
+  const times = parseScheduleTimes(setting?.scheduleTimes || DEFAULT_SCHEDULE_TIMES);
+  const currentTime = now.format("HH:mm");
+
+  if (times.length < 2) {
+    return 1;
+  }
+
+  return currentTime >= times[1] ? REQUIRED_DAILY_HARVEST_SESSIONS : 1;
+}
+
+async function getTodayHarvestSessionSummary(unitBudidayaId, now, setting) {
+  const date = now.format("YYYY-MM-DD");
+  const rows = await sequelize.query(
+    `
+      SELECT
+        COUNT(DISTINCT p.id) AS sessionCount,
+        MAX(l.createdAt) AS latestHarvestAt
+      FROM panen p
+      INNER JOIN laporan l ON l.id = p.laporanId AND l.isDeleted = 0
+      WHERE p.isDeleted = 0
+        AND l.tipe = 'panen'
+        AND l.unitBudidayaId = :unitBudidayaId
+        AND DATE(l.createdAt) = :date
+    `,
+    {
+      replacements: { unitBudidayaId, date },
+      type: QueryTypes.SELECT,
+    }
+  );
+
+  return {
+    requiredSessionCount: requiredHarvestSessionsForRun(setting, now),
+    sessionCount: Number(rows[0]?.sessionCount || 0),
+    latestHarvestAt: rows[0]?.latestHarvestAt || null,
+  };
+}
+
 async function sendDuplicateReminderNotification(result, setting, options = {}) {
   const context = result?.context;
   const indicationCount = Number(context?.indicationChickenCount || 0);
@@ -307,6 +353,22 @@ async function runHealthIndicationScheduler(options = {}) {
 
     for (const unit of units) {
       try {
+        const harvestSummary = await getTodayHarvestSessionSummary(unit.id, now, setting);
+        if (harvestSummary.sessionCount < harvestSummary.requiredSessionCount) {
+          summary.skippedCount += 1;
+          summary.units.push({
+            unitBudidayaId: unit.id,
+            unitName: unit.nama,
+            created: false,
+            reason: "HARVEST_NOT_READY",
+            harvestSessionCount: harvestSummary.sessionCount,
+            requiredHarvestSessionCount: harvestSummary.requiredSessionCount,
+            latestHarvestAt: harvestSummary.latestHarvestAt,
+            message: `Panen hari ini baru ${harvestSummary.sessionCount}/${harvestSummary.requiredSessionCount} sesi. Scheduler menunggu panen lengkap agar analisis valid.`,
+          });
+          continue;
+        }
+
         const result = await createHealthIndicationAlert({
           unitBudidayaId: unit.id,
           days: setting.days,
